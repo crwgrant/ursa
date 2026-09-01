@@ -425,10 +425,15 @@ fn run_emulator(
                     .set_mods(input.mods)
                     .set_consumed_mods(input.consumed)
                     .set_unshifted_codepoint(input.unshifted)
-                    .set_utf8(input.utf8);
+                    .set_utf8(input.utf8.clone());
                 key_encoder
                     .set_options_from_terminal(&terminal)
                     .encode_to_vec(&key_event, &mut encoded)?;
+                if encoded.is_empty() {
+                    if let Some(text) = input.utf8.as_deref() {
+                        encoded.extend_from_slice(text.as_bytes());
+                    }
+                }
                 pty::write_pty(&pty.writer, &encoded);
             }
             Command::Resize {
