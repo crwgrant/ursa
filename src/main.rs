@@ -10,7 +10,7 @@ use gpui::{
 };
 use session::Session;
 
-actions!(ghostterm, [Quit, NewTab]);
+actions!(ghostterm, [Quit, NewTab, CloseTab]);
 
 struct Workspace {
     tabs: Vec<gpui::Entity<Session>>,
@@ -43,6 +43,29 @@ impl Workspace {
         }
     }
 
+    fn close_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if index >= self.tabs.len() {
+            return;
+        }
+        if self.tabs.len() == 1 {
+            cx.quit();
+            return;
+        }
+
+        self.tabs.remove(index);
+        if self.active == index {
+            self.active = index.saturating_sub(1);
+        } else if self.active > index {
+            self.active -= 1;
+        }
+        self.focus_active(window, cx);
+        cx.notify();
+    }
+
+    fn close_active_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_tab(self.active, window, cx);
+    }
+
     fn focus_active(&self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(tab) = self.tabs.get(self.active) {
             tab.update(cx, |session, _cx| session.focus(window));
@@ -70,6 +93,9 @@ impl Render for Workspace {
             .text_color(rgb(theme::TEXT))
             .font_family("Menlo")
             .on_action(cx.listener(|this, _: &NewTab, window, cx| this.add_tab(window, cx)))
+            .on_action(cx.listener(|this, _: &CloseTab, window, cx| {
+                this.close_active_tab(window, cx)
+            }))
             .child(self.render_sidebar(&tabs, cx))
             .child(self.render_terminal())
     }
@@ -150,6 +176,30 @@ fn new_tab_button(cx: &mut Context<Workspace>) -> impl IntoElement {
         )
 }
 
+fn close_tab_button(index: usize, cx: &mut Context<Workspace>) -> impl IntoElement {
+    div()
+        .id(("tab-close", index))
+        .h(px(18.0))
+        .w(px(18.0))
+        .rounded_md()
+        .flex()
+        .items_center()
+        .justify_center()
+        .flex_shrink_0()
+        .text_xs()
+        .text_color(rgb(theme::TEXT_DIM))
+        .cursor_pointer()
+        .hover(|style| style.bg(rgb(theme::BUTTON)).text_color(rgb(theme::TEXT)))
+        .child("×")
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _event, window, cx| {
+                cx.stop_propagation();
+                this.close_tab(index, window, cx);
+            }),
+        )
+}
+
 fn tab_row(
     index: usize,
     title: SharedString,
@@ -186,6 +236,7 @@ fn tab_row(
                 .flex()
                 .items_center()
                 .gap_2()
+                .w_full()
                 .child(div().w(px(6.0)).h(px(6.0)).rounded_full().bg(if selected {
                     rgb(theme::ACCENT)
                 } else {
@@ -193,6 +244,8 @@ fn tab_row(
                 }))
                 .child(
                     div()
+                        .flex_1()
+                        .min_w_0()
                         .text_sm()
                         .text_ellipsis()
                         .text_color(if selected {
@@ -201,7 +254,8 @@ fn tab_row(
                             rgb(theme::TEXT_DIM)
                         })
                         .child(title),
-                ),
+                )
+                .child(close_tab_button(index, cx)),
         )
 }
 
@@ -213,6 +267,7 @@ fn main() {
         cx.bind_keys([
             KeyBinding::new("cmd-q", Quit, None),
             KeyBinding::new("cmd-t", NewTab, None),
+            KeyBinding::new("cmd-w", CloseTab, None),
         ]);
 
         cx.open_window(
