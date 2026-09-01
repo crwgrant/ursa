@@ -3,8 +3,10 @@ use gpui::{
     SharedString, TextRun, Window,
 };
 use libghostty_vt::{
+    error::Error,
     render::{CellIterator, RenderState, RowIterator},
     style::RgbColor,
+    terminal::{Point as TermPoint, PointCoordinate},
     Terminal,
 };
 
@@ -21,6 +23,7 @@ pub struct Frame {
 #[derive(Clone, Debug)]
 pub struct FrameRow {
     pub spans: Vec<FrameSpan>,
+    pub wrapped: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -30,6 +33,7 @@ pub struct FrameSpan {
     pub fg: Rgb,
     pub bg: Option<Rgb>,
     pub bold: bool,
+    pub link: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -70,11 +74,14 @@ pub fn capture<'alloc>(
     let mut rows = Vec::with_capacity(snapshot.rows()? as usize);
     let mut text = String::with_capacity(16);
     let mut row_iter = row_it.update(&snapshot)?;
+    let mut row_idx = 0u32;
 
     while let Some(row) = row_iter.next() {
+        let wrapped = row.raw_row()?.is_wrapped().unwrap_or(false);
         let mut spans = Vec::new();
         let mut current: Option<FrameSpan> = None;
         let mut cell_iter = cell_it.update(row)?;
+        let mut col = 0u16;
 
         while let Some(cell) = cell_iter.next() {
             let graphemes = cell.graphemes_len()?;
@@ -98,6 +105,8 @@ pub fn capture<'alloc>(
                 fg = selected_bg;
             }
 
+            let link = hyperlink_uri(terminal, col, row_idx, cell);
+
             if graphemes == 0 {
                 flush_span(&mut spans, &mut current);
                 spans.push(FrameSpan {
@@ -106,7 +115,9 @@ pub fn capture<'alloc>(
                     fg: Rgb::from_ghostty(fg),
                     bg: bg.map(Rgb::from_ghostty),
                     bold,
+                    link,
                 });
+                col = col.saturating_add(1);
                 continue;
             }
 
@@ -119,11 +130,15 @@ pub fn capture<'alloc>(
                 fg: Rgb::from_ghostty(fg),
                 bg: bg.map(Rgb::from_ghostty),
                 bold,
+                link,
             };
 
             match current.as_mut() {
                 Some(span)
-                    if span.fg == next.fg && span.bg == next.bg && span.bold == next.bold =>
+                    if span.fg == next.fg
+                        && span.bg == next.bg
+                        && span.bold == next.bold
+                        && span.link == next.link =>
                 {
                     span.text.push_str(&next.text);
                     span.columns += 1;
@@ -134,10 +149,12 @@ pub fn capture<'alloc>(
                 }
                 None => current = Some(next),
             }
+            col = col.saturating_add(1);
         }
 
         flush_span(&mut spans, &mut current);
-        rows.push(FrameRow { spans });
+        rows.push(FrameRow { spans, wrapped });
+        row_idx += 1;
     }
 
     let cursor = if snapshot.cursor_visible()? {
@@ -160,6 +177,200 @@ fn flush_span(spans: &mut Vec<FrameSpan>, current: &mut Option<FrameSpan>) {
     if let Some(span) = current.take() {
         spans.push(span);
     }
+}
+
+fn hyperlink_uri(
+    terminal: &Terminal<'_, '_>,
+    col: u16,
+    row: u32,
+    cell: &libghostty_vt::render::CellIteration<'_, '_>,
+) -> Option<String> {
+    let raw = cell.raw_cell().ok()?;
+    if !raw.has_hyperlink().ok()? {
+        return None;
+    }
+    let grid_ref = terminal
+        .grid_ref(TermPoint::Viewport(PointCoordinate { x: col, y: row }))
+        .ok()?;
+    let mut buf = vec![0u8; 256];
+    loop {
+        match grid_ref.hyperlink_uri(&mut buf) {
+            Ok(0) => return None,
+            Ok(len) => return String::from_utf8(buf[..len].to_vec()).ok(),
+            Err(Error::OutOfSpace { required }) if required > buf.len() => {
+                buf.resize(required.max(buf.len().saturating_mul(2)), 0);
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
+impl Frame {
+    /// Website URL under a viewport cell, if Cmd+click should open it.
+    pub fn url_at(&self, row: u32, col: u16) -> Option<String> {
+        let row = row as usize;
+        if let Some(uri) = hyperlink_at_cell(self, row, col).filter(|uri| is_web_url(uri)) {
+            return Some(uri);
+        }
+        let (text, at) = paragraph_text_at(self, row, col)?;
+        find_web_url_at(&text, at)
+    }
+}
+
+fn hyperlink_at_cell(frame: &Frame, row: usize, col: u16) -> Option<String> {
+    let row = frame.rows.get(row)?;
+    let mut x = 0u16;
+    for span in &row.spans {
+        if col < x.saturating_add(span.columns) {
+            return span.link.clone();
+        }
+        x = x.saturating_add(span.columns);
+    }
+    None
+}
+
+fn paragraph_text_at(frame: &Frame, row: usize, col: u16) -> Option<(String, usize)> {
+    if row >= frame.rows.len() {
+        return None;
+    }
+    let (start, end) = wrapped_range(&frame.rows, row);
+    let mut text = String::new();
+    let mut click_at = None;
+    for r in start..=end {
+        let mut x = 0u16;
+        for span in &frame.rows[r].spans {
+            let span_end = x.saturating_add(span.columns);
+            if r == row && col >= x && col < span_end && click_at.is_none() {
+                if span.text.is_empty() {
+                    click_at = Some(text.len().saturating_sub(1));
+                } else {
+                    let local = (col - x) as usize;
+                    click_at = Some(text.len() + byte_offset_for_column(&span.text, local));
+                }
+            }
+            text.push_str(&span.text);
+            x = span_end;
+        }
+    }
+    let at = click_at.filter(|_| !text.is_empty())?;
+    let at = at.min(text.len().saturating_sub(1));
+    Some((text, at))
+}
+
+fn wrapped_range(rows: &[FrameRow], row: usize) -> (usize, usize) {
+    let mut start = row;
+    while start > 0 && rows[start - 1].wrapped {
+        start -= 1;
+    }
+    let mut end = row;
+    while end + 1 < rows.len() && rows[end].wrapped {
+        end += 1;
+    }
+    (start, end)
+}
+
+fn byte_offset_for_column(text: &str, col: usize) -> usize {
+    text.char_indices()
+        .nth(col)
+        .map(|(i, _)| i)
+        .unwrap_or_else(|| text.len().saturating_sub(1))
+}
+
+fn find_web_url_at(text: &str, at: usize) -> Option<String> {
+    if text.is_empty() {
+        return None;
+    }
+    let at = at.min(text.len().saturating_sub(1));
+    let lower = text.to_ascii_lowercase();
+    for prefix in ["https://", "http://", "www."] {
+        let mut search = 0;
+        while let Some(rel) = lower[search..].find(prefix) {
+            let start = search + rel;
+            let after = start + prefix.len();
+            let extra = lower.as_bytes()[after..]
+                .iter()
+                .copied()
+                .take_while(|&b| is_url_byte(b))
+                .count();
+            let end = trim_url_end(&lower, start, after + extra);
+            if end > after && at >= start && at < end {
+                let mut url = text[start..end].to_string();
+                if url.to_ascii_lowercase().starts_with("www.") {
+                    url.insert_str(0, "https://");
+                }
+                return is_web_url(&url).then_some(url);
+            }
+            search = start + prefix.len();
+        }
+    }
+    None
+}
+
+fn is_url_byte(byte: u8) -> bool {
+    matches!(
+        byte,
+        b'A'..=b'Z'
+            | b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'-'
+            | b'.'
+            | b'_'
+            | b'~'
+            | b':'
+            | b'/'
+            | b'?'
+            | b'#'
+            | b'['
+            | b']'
+            | b'@'
+            | b'!'
+            | b'$'
+            | b'&'
+            | b'\''
+            | b'('
+            | b')'
+            | b'*'
+            | b'+'
+            | b','
+            | b';'
+            | b'='
+            | b'%'
+    )
+}
+
+fn trim_url_end(lower: &str, start: usize, mut end: usize) -> usize {
+    let bytes = lower.as_bytes();
+    while end > start {
+        match bytes[end - 1] {
+            b'.' | b',' | b';' | b':' | b'?' | b'!' => end -= 1,
+            b')' if unmatched(&bytes[start..end], b'(', b')') => end -= 1,
+            b']' if unmatched(&bytes[start..end], b'[', b']') => end -= 1,
+            b'}' if unmatched(&bytes[start..end], b'{', b'}') => end -= 1,
+            b'>' if unmatched(&bytes[start..end], b'<', b'>') => end -= 1,
+            b'\'' | b'"' => end -= 1,
+            _ => break,
+        }
+    }
+    end
+}
+
+fn unmatched(bytes: &[u8], open: u8, close: u8) -> bool {
+    let mut depth = 0i32;
+    for &byte in bytes {
+        if byte == open {
+            depth += 1;
+        } else if byte == close {
+            depth -= 1;
+        }
+    }
+    depth < 0
+}
+
+fn is_web_url(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    (lower.starts_with("https://") || lower.starts_with("http://"))
+        && lower.len() > 8
+        && lower.bytes().any(|b| b != b'/' && b != b':')
 }
 
 pub fn paint(

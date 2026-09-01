@@ -6,8 +6,8 @@ use std::{
 
 use gpui::{
     canvas, div, px, rgb, Bounds, Context, CursorStyle, FocusHandle, InteractiveElement,
-    IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, Pixels, Render, ScrollWheelEvent, Styled, Window,
+    IntoElement, KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement, Pixels, Render, ScrollWheelEvent, Styled, Window,
 };
 use libghostty_vt::{
     key,
@@ -72,6 +72,7 @@ pub struct Session {
     cell_size: gpui::Point<Pixels>,
     content_bounds: Option<Bounds<Pixels>>,
     selecting: bool,
+    link_hover: bool,
 }
 
 impl Session {
@@ -137,6 +138,7 @@ impl Session {
             cell_size: cell,
             content_bounds: None,
             selecting: false,
+            link_hover: false,
         }
     }
 
@@ -160,6 +162,16 @@ impl Session {
         if event.button != MouseButton::Left {
             return;
         }
+        if event.modifiers.platform {
+            if let Some(url) = self
+                .pointer_at(event.position)
+                .and_then(|pointer| self.frame.url_at(pointer.row, pointer.col))
+            {
+                cx.open_url(&url);
+                cx.stop_propagation();
+                return;
+            }
+        }
         if let Some(pointer) = self.pointer_at(event.position) {
             self.selecting = true;
             let _ = self.commands.send(Command::SelectPress(pointer));
@@ -168,6 +180,7 @@ impl Session {
     }
 
     fn handle_mouse_move(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
+        self.update_link_hover(event.position, event.modifiers.platform, cx);
         if !self.selecting && !event.dragging() {
             return;
         }
@@ -178,6 +191,22 @@ impl Session {
                 rectangle: event.modifiers.alt,
             });
             cx.stop_propagation();
+        }
+    }
+
+    fn handle_modifiers(&mut self, event: &ModifiersChangedEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.update_link_hover(window.mouse_position(), event.modifiers.platform, cx);
+    }
+
+    fn update_link_hover(&mut self, position: gpui::Point<Pixels>, cmd: bool, cx: &mut Context<Self>) {
+        let hovering = cmd
+            && self
+                .pointer_at(position)
+                .and_then(|pointer| self.frame.url_at(pointer.row, pointer.col))
+                .is_some();
+        if hovering != self.link_hover {
+            self.link_hover = hovering;
+            cx.notify();
         }
     }
 
@@ -268,8 +297,15 @@ impl Render for Session {
             .size_full()
             .bg(rgb(theme::WINDOW))
             .overflow_hidden()
-            .cursor(CursorStyle::IBeam)
+            .cursor(if self.link_hover {
+                CursorStyle::PointingHand
+            } else {
+                CursorStyle::IBeam
+            })
             .on_key_down(cx.listener(|this, event, _window, cx| this.handle_key(event, cx)))
+            .on_modifiers_changed(cx.listener(|this, event, window, cx| {
+                this.handle_modifiers(event, window, cx)
+            }))
             .on_scroll_wheel(cx.listener(|this, event, _window, cx| this.handle_scroll(event, cx)))
             .on_mouse_down(
                 MouseButton::Left,
