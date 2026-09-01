@@ -16,3 +16,4 @@ pub const TEXT: u32 = 0xc0caf5;
 pub const TEXT_DIM: u32 = 0x7a8299;
 pub const CURSOR: u32 = 0xc0caf5;
 pub const BUTTON: u32 = 0x1f2430;
+pub const TOOLTIP: u32 = 0x232833;

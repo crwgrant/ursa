@@ -5,7 +5,7 @@ mod session;
 mod theme;
 
 use gpui::{
-    actions, div, prelude::*, px, rgb, size, App, Application, Bounds, Context, KeyBinding,
+    actions, div, prelude::*, px, rgb, size, AnyView, App, Application, Bounds, Context, KeyBinding,
     MouseButton, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
 use session::Session;
@@ -169,6 +169,7 @@ fn new_tab_button(cx: &mut Context<Workspace>) -> impl IntoElement {
         .text_sm()
         .cursor_pointer()
         .hover(|style| style.bg(rgb(theme::TAB_HOVER)))
+        .tooltip(action_tooltip("New Tab", "⌘T"))
         .child("+")
         .on_mouse_down(
             MouseButton::Left,
@@ -190,6 +191,7 @@ fn close_tab_button(index: usize, cx: &mut Context<Workspace>) -> impl IntoEleme
         .text_color(rgb(theme::TEXT_DIM))
         .cursor_pointer()
         .hover(|style| style.bg(rgb(theme::BUTTON)).text_color(rgb(theme::TEXT)))
+        .tooltip(action_tooltip("Close Tab", "⌘W"))
         .child("×")
         .on_mouse_down(
             MouseButton::Left,
@@ -257,6 +259,53 @@ fn tab_row(
                 )
                 .child(close_tab_button(index, cx)),
         )
+}
+
+struct ActionTooltip {
+    label: SharedString,
+    shortcut: SharedString,
+}
+
+fn action_tooltip(
+    label: impl Into<SharedString>,
+    shortcut: impl Into<SharedString>,
+) -> impl Fn(&mut Window, &mut App) -> AnyView {
+    let label = label.into();
+    let shortcut = shortcut.into();
+    move |_, cx| {
+        cx.new(|_| ActionTooltip {
+            label: label.clone(),
+            shortcut: shortcut.clone(),
+        })
+        .into()
+    }
+}
+
+impl Render for ActionTooltip {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(rgb(theme::TOOLTIP))
+            .border_1()
+            .border_color(rgb(theme::SIDEBAR_BORDER))
+            .shadow_md()
+            .text_xs()
+            .child(
+                div()
+                    .text_color(rgb(theme::TEXT))
+                    .child(self.label.clone()),
+            )
+            .child(
+                div()
+                    .text_color(rgb(theme::TEXT_DIM))
+                    .child(self.shortcut.clone()),
+            )
+    }
 }
 
 fn main() {
