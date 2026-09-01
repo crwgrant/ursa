@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use gpui::{
     fill, point, px, rgb, size, Bounds, Font, FontStyle, FontWeight, Hsla, Pixels, Point,
     SharedString, TextRun, UnderlineStyle, Window,
@@ -42,11 +44,17 @@ pub struct CursorCell {
     pub y: u16,
 }
 
-/// A clickable website URL and the viewport cells it occupies.
+/// A clickable link and the viewport cells it occupies.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LinkHit {
-    pub url: String,
+    pub action: LinkAction,
     pub ranges: Vec<LinkRange>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LinkAction {
+    OpenUrl(String),
+    OpenFolder(PathBuf),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -220,14 +228,12 @@ fn hyperlink_uri(
 }
 
 impl Frame {
-    pub fn url_at(&self, row: u32, col: u16) -> Option<String> {
-        self.link_at(row, col).map(|hit| hit.url)
-    }
-
     pub fn link_at(&self, row: u32, col: u16) -> Option<LinkHit> {
         let row = row as usize;
-        if let Some(uri) = hyperlink_at_cell(self, row, col).filter(|uri| is_web_url(uri)) {
-            return osc8_hit(self, row, col, &uri);
+        if let Some(uri) = hyperlink_at_cell(self, row, col) {
+            if let Some(action) = action_from_osc8(&uri) {
+                return osc8_hit(self, row, col, &uri, action);
+            }
         }
         regex_hit(self, row, col)
     }
@@ -289,7 +295,13 @@ fn paragraph_at(frame: &Frame, row: usize, col: u16) -> Option<(String, Vec<(usi
     Some((text, cells, at))
 }
 
-fn osc8_hit(frame: &Frame, row: usize, col: u16, uri: &str) -> Option<LinkHit> {
+fn osc8_hit(
+    frame: &Frame,
+    row: usize,
+    col: u16,
+    uri: &str,
+    action: LinkAction,
+) -> Option<LinkHit> {
     let (start, end) = wrapped_range(&frame.rows, row);
     let mut cells = Vec::new();
     let mut found = false;
@@ -308,7 +320,7 @@ fn osc8_hit(frame: &Frame, row: usize, col: u16, uri: &str) -> Option<LinkHit> {
                 } else if in_run {
                     if found {
                         return Some(LinkHit {
-                            url: uri.to_string(),
+                            action,
                             ranges: coalesce_ranges(&cells),
                         });
                     }
@@ -321,7 +333,7 @@ fn osc8_hit(frame: &Frame, row: usize, col: u16, uri: &str) -> Option<LinkHit> {
     }
     if found && !cells.is_empty() {
         Some(LinkHit {
-            url: uri.to_string(),
+            action,
             ranges: coalesce_ranges(&cells),
         })
     } else {
@@ -331,7 +343,28 @@ fn osc8_hit(frame: &Frame, row: usize, col: u16, uri: &str) -> Option<LinkHit> {
 
 fn regex_hit(frame: &Frame, row: usize, col: u16) -> Option<LinkHit> {
     let (text, cells, at) = paragraph_at(frame, row, col)?;
-    let (start, end, url) = find_web_url_at(&text, at)?;
+    if let Some((start, end, url)) = find_web_url_at(&text, at) {
+        return hit_from_span(&text, &cells, start, end, LinkAction::OpenUrl(url));
+    }
+    if let Some((start, end, folder)) = find_path_at(&text, at) {
+        return hit_from_span(
+            &text,
+            &cells,
+            start,
+            end,
+            LinkAction::OpenFolder(folder),
+        );
+    }
+    None
+}
+
+fn hit_from_span(
+    text: &str,
+    cells: &[(usize, u16)],
+    start: usize,
+    end: usize,
+    action: LinkAction,
+) -> Option<LinkHit> {
     let start_char = text[..start].chars().count();
     let end_char = text[..end].chars().count();
     if start_char >= cells.len() {
@@ -342,7 +375,7 @@ fn regex_hit(frame: &Frame, row: usize, col: u16) -> Option<LinkHit> {
         return None;
     }
     Some(LinkHit {
-        url,
+        action,
         ranges: coalesce_ranges(covered),
     })
 }
@@ -473,6 +506,186 @@ fn is_web_url(url: &str) -> bool {
     (lower.starts_with("https://") || lower.starts_with("http://"))
         && lower.len() > 8
         && lower.bytes().any(|b| b != b'/' && b != b':')
+}
+
+fn action_from_osc8(uri: &str) -> Option<LinkAction> {
+    if is_web_url(uri) {
+        return Some(LinkAction::OpenUrl(uri.to_string()));
+    }
+    folder_from_raw(uri).map(LinkAction::OpenFolder)
+}
+
+fn find_path_at(text: &str, at: usize) -> Option<(usize, usize, PathBuf)> {
+    if text.is_empty() {
+        return None;
+    }
+    let mut at = at.min(text.len().saturating_sub(1));
+    while at > 0 && !text.is_char_boundary(at) {
+        at -= 1;
+    }
+    if !text[at..].chars().next().is_some_and(is_path_char) {
+        return None;
+    }
+
+    let mut start = at;
+    for (idx, ch) in text[..at].char_indices().rev() {
+        if is_path_char(ch) {
+            start = idx;
+        } else {
+            break;
+        }
+    }
+
+    let mut end = at;
+    for (rel, ch) in text[at..].char_indices() {
+        if is_path_char(ch) {
+            end = at + rel + ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+
+    let span = &text[start..end];
+    let trimmed = trim_path_span(span);
+    if trimmed.is_empty() {
+        return None;
+    }
+    let end = start + trimmed.len();
+    let folder = folder_from_raw(trimmed)?;
+    Some((start, end, folder))
+}
+
+fn is_path_char(ch: char) -> bool {
+    if ch.is_ascii() {
+        matches!(
+            ch as u8,
+            b'A'..=b'Z'
+                | b'a'..=b'z'
+                | b'0'..=b'9'
+                | b'/'
+                | b'.'
+                | b'_'
+                | b'-'
+                | b'~'
+                | b'+'
+                | b'@'
+                | b'%'
+                | b':'
+        )
+    } else {
+        !ch.is_whitespace() && !matches!(ch, '<' | '>' | '|' | '"' | '\'')
+    }
+}
+
+fn trim_path_span(span: &str) -> &str {
+    let mut trimmed = span;
+    loop {
+        if trimmed.len() > 1 {
+            let last = trimmed.as_bytes()[trimmed.len() - 1];
+            if matches!(
+                last,
+                b'.' | b',' | b';' | b'!' | b'?' | b')' | b']' | b'\'' | b'"'
+            ) {
+                trimmed = &trimmed[..trimmed.len() - 1];
+                continue;
+            }
+        }
+        if let Some((head, tail)) = trimmed.rsplit_once(':') {
+            if !head.is_empty()
+                && !tail.is_empty()
+                && tail.bytes().all(|b| b.is_ascii_digit())
+                && !head.eq_ignore_ascii_case("file")
+            {
+                trimmed = head;
+                continue;
+            }
+        }
+        break;
+    }
+    trimmed
+}
+
+fn looks_like_path(raw: &str) -> bool {
+    if raw == "~" || raw.starts_with("~/") || raw.starts_with("file:") {
+        return true;
+    }
+    if raw.starts_with('/') {
+        return raw.len() > 1;
+    }
+    (raw.starts_with("./") || raw.starts_with("../") || raw.contains('/'))
+        && !raw.starts_with("http:")
+        && !raw.starts_with("https:")
+}
+
+fn folder_from_raw(raw: &str) -> Option<PathBuf> {
+    if !looks_like_path(raw) {
+        return None;
+    }
+    let path = expand_user_path(raw)?;
+    if path.is_dir() {
+        return Some(path);
+    }
+    if path.is_file() {
+        return path.parent().filter(|parent| parent.is_dir()).map(PathBuf::from);
+    }
+    None
+}
+
+fn expand_user_path(raw: &str) -> Option<PathBuf> {
+    if let Some(rest) = raw.strip_prefix("file:") {
+        return parse_file_uri_rest(rest);
+    }
+    if raw == "~" {
+        return std::env::var_os("HOME").map(PathBuf::from);
+    }
+    if let Some(rest) = raw.strip_prefix("~/") {
+        let mut home = PathBuf::from(std::env::var_os("HOME")?);
+        home.push(rest);
+        return Some(home);
+    }
+    if raw.starts_with('/') {
+        return Some(PathBuf::from(raw));
+    }
+    std::env::current_dir().ok().map(|cwd| cwd.join(raw))
+}
+
+fn parse_file_uri_rest(rest: &str) -> Option<PathBuf> {
+    let path = if let Some(rest) = rest.strip_prefix("//") {
+        let slash = rest.find('/')?;
+        let (auth, path) = rest.split_at(slash);
+        if !auth.is_empty() && !auth.eq_ignore_ascii_case("localhost") {
+            return None;
+        }
+        path
+    } else {
+        rest
+    };
+    let decoded = percent_decode(path);
+    if decoded.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(decoded))
+}
+
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Some(value) = std::str::from_utf8(&bytes[i + 1..i + 3])
+                .ok()
+                .and_then(|hex| u8::from_str_radix(hex, 16).ok())
+            {
+                out.push(value);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 pub fn paint(

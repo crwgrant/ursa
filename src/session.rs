@@ -22,7 +22,7 @@ use libghostty_vt::{
 };
 
 use crate::{
-    frame::{self, Frame, LinkHit},
+    frame::{self, Frame, LinkAction, LinkHit},
     input,
     pty::{self, PtyIo},
     theme,
@@ -170,11 +170,14 @@ impl Session {
             return;
         }
         if event.modifiers.platform {
-            if let Some(url) = self
+            if let Some(hit) = self
                 .pointer_at(event.position)
-                .and_then(|pointer| self.frame.url_at(pointer.row, pointer.col))
+                .and_then(|pointer| self.frame.link_at(pointer.row, pointer.col))
             {
-                cx.open_url(&url);
+                match hit.action {
+                    LinkAction::OpenUrl(url) => cx.open_url(&url),
+                    LinkAction::OpenFolder(path) => cx.open_with_system(&path),
+                }
                 cx.stop_propagation();
                 return;
             }
