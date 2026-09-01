@@ -92,25 +92,21 @@ pub fn capture<'alloc>(
                 bold = style.bold;
             }
 
+            if cell.is_selected()? {
+                let selected_bg = bg.unwrap_or(colors.background);
+                bg = Some(fg);
+                fg = selected_bg;
+            }
+
             if graphemes == 0 {
                 flush_span(&mut spans, &mut current);
-                if let Some(bg) = bg {
-                    spans.push(FrameSpan {
-                        text: String::new(),
-                        columns: 1,
-                        fg: Rgb::from_ghostty(fg),
-                        bg: Some(Rgb::from_ghostty(bg)),
-                        bold,
-                    });
-                } else {
-                    spans.push(FrameSpan {
-                        text: String::new(),
-                        columns: 1,
-                        fg: Rgb::from_ghostty(colors.foreground),
-                        bg: None,
-                        bold: false,
-                    });
-                }
+                spans.push(FrameSpan {
+                    text: String::new(),
+                    columns: 1,
+                    fg: Rgb::from_ghostty(fg),
+                    bg: bg.map(Rgb::from_ghostty),
+                    bold,
+                });
                 continue;
             }
 
