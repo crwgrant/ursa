@@ -6,8 +6,8 @@ use std::{
 
 use gpui::{
     canvas, div, px, rgb, Bounds, Context, CursorStyle, FocusHandle, InteractiveElement,
-    IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, Pixels, Render, ScrollWheelEvent, Styled, Window,
+    IntoElement, KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement, Pixels, Render, ScrollWheelEvent, Styled, Window,
 };
 use libghostty_vt::{
     key,
@@ -22,7 +22,7 @@ use libghostty_vt::{
 };
 
 use crate::{
-    frame::{self, Frame},
+    frame::{self, Frame, LinkAction, LinkHit},
     input,
     pty::{self, PtyIo},
     theme,
@@ -72,6 +72,9 @@ pub struct Session {
     cell_size: gpui::Point<Pixels>,
     content_bounds: Option<Bounds<Pixels>>,
     selecting: bool,
+    cmd_for_links: bool,
+    hover_cell: Option<(u32, u16)>,
+    hovered_link: Option<LinkHit>,
 }
 
 impl Session {
@@ -114,7 +117,10 @@ impl Session {
                 if this
                     .update(cx, |this, cx| {
                         match event {
-                            Event::Frame(frame) => this.frame = frame,
+                            Event::Frame(frame) => {
+                                this.frame = frame;
+                                this.recompute_hovered_link();
+                            }
                             Event::Title(title) if !title.is_empty() => this.title = title,
                             Event::Title(_) => {}
                         }
@@ -137,6 +143,9 @@ impl Session {
             cell_size: cell,
             content_bounds: None,
             selecting: false,
+            cmd_for_links: false,
+            hover_cell: None,
+            hovered_link: None,
         }
     }
 
@@ -160,6 +169,19 @@ impl Session {
         if event.button != MouseButton::Left {
             return;
         }
+        if event.modifiers.platform {
+            if let Some(hit) = self
+                .pointer_at(event.position)
+                .and_then(|pointer| self.frame.link_at(pointer.row, pointer.col))
+            {
+                match hit.action {
+                    LinkAction::OpenUrl(url) => cx.open_url(&url),
+                    LinkAction::OpenFolder(path) => cx.open_with_system(&path),
+                }
+                cx.stop_propagation();
+                return;
+            }
+        }
         if let Some(pointer) = self.pointer_at(event.position) {
             self.selecting = true;
             let _ = self.commands.send(Command::SelectPress(pointer));
@@ -168,6 +190,7 @@ impl Session {
     }
 
     fn handle_mouse_move(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
+        self.update_link_hover(event.position, event.modifiers.platform, cx);
         if !self.selecting && !event.dragging() {
             return;
         }
@@ -179,6 +202,32 @@ impl Session {
             });
             cx.stop_propagation();
         }
+    }
+
+    fn handle_modifiers(&mut self, event: &ModifiersChangedEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.update_link_hover(window.mouse_position(), event.modifiers.platform, cx);
+    }
+
+    fn update_link_hover(&mut self, position: gpui::Point<Pixels>, cmd: bool, cx: &mut Context<Self>) {
+        self.cmd_for_links = cmd;
+        self.hover_cell = self.pointer_at(position).map(|pointer| (pointer.row, pointer.col));
+        let hit = self.current_link_hit();
+        if hit != self.hovered_link {
+            self.hovered_link = hit;
+            cx.notify();
+        }
+    }
+
+    fn recompute_hovered_link(&mut self) {
+        self.hovered_link = self.current_link_hit();
+    }
+
+    fn current_link_hit(&self) -> Option<LinkHit> {
+        if !self.cmd_for_links {
+            return None;
+        }
+        self.hover_cell
+            .and_then(|(row, col)| self.frame.link_at(row, col))
     }
 
     fn handle_mouse_up(&mut self, event: &MouseUpEvent, cx: &mut Context<Self>) {
@@ -260,6 +309,7 @@ impl Session {
 impl Render for Session {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let frame = self.frame.clone();
+        let hovered = self.hovered_link.clone();
         let entity = cx.entity();
 
         div()
@@ -268,8 +318,15 @@ impl Render for Session {
             .size_full()
             .bg(rgb(theme::WINDOW))
             .overflow_hidden()
-            .cursor(CursorStyle::IBeam)
+            .cursor(if self.hovered_link.is_some() {
+                CursorStyle::PointingHand
+            } else {
+                CursorStyle::IBeam
+            })
             .on_key_down(cx.listener(|this, event, _window, cx| this.handle_key(event, cx)))
+            .on_modifiers_changed(cx.listener(|this, event, window, cx| {
+                this.handle_modifiers(event, window, cx)
+            }))
             .on_scroll_wheel(cx.listener(|this, event, _window, cx| this.handle_scroll(event, cx)))
             .on_mouse_down(
                 MouseButton::Left,
@@ -298,6 +355,7 @@ impl Render for Session {
                             cell,
                             &frame::terminal_font(),
                             px(theme::FONT_SIZE),
+                            hovered.as_ref(),
                             window,
                             cx,
                         );
