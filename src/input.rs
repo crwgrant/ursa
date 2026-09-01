@@ -7,9 +7,15 @@ pub struct EncodedKey {
     pub consumed: key::Mods,
     pub utf8: Option<String>,
     pub unshifted: char,
+    /// When set, write these bytes to the PTY instead of running the encoder.
+    pub raw: Option<Vec<u8>>,
 }
 
 pub fn encode_keystroke(keystroke: &Keystroke) -> Option<EncodedKey> {
+    if let Some(raw) = macos_line_editing(keystroke) {
+        return Some(raw);
+    }
+
     let utf8 = printable_text(keystroke);
     let mut mods = map_mods(&keystroke.modifiers);
 
@@ -37,6 +43,33 @@ pub fn encode_keystroke(keystroke: &Keystroke) -> Option<EncodedKey> {
         consumed,
         utf8,
         unshifted,
+        raw: None,
+    })
+}
+
+/// Ghostty's macOS "natural text editing" bindings: Cmd+arrows jump to the
+/// start/end of the line, Option+arrows move by readline words.
+fn macos_line_editing(keystroke: &Keystroke) -> Option<EncodedKey> {
+    let mods = &keystroke.modifiers;
+    if mods.control {
+        return None;
+    }
+
+    let bytes: &[u8] = match (mods.platform, mods.alt, keystroke.key.as_str()) {
+        (true, false, "left") => b"\x01",  // Ctrl-A, beginning of line
+        (true, false, "right") => b"\x05", // Ctrl-E, end of line
+        (false, true, "left") => b"\x1bb", // ESC b, backward-word
+        (false, true, "right") => b"\x1bf", // ESC f, forward-word
+        _ => return None,
+    };
+
+    Some(EncodedKey {
+        key: Key::Unidentified,
+        mods: key::Mods::empty(),
+        consumed: key::Mods::empty(),
+        utf8: None,
+        unshifted: '\0',
+        raw: Some(bytes.to_vec()),
     })
 }
 
