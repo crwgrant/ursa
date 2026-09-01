@@ -1,6 +1,6 @@
 use gpui::{
     fill, point, px, rgb, size, Bounds, Font, FontStyle, FontWeight, Hsla, Pixels, Point,
-    SharedString, TextRun, Window,
+    SharedString, TextRun, UnderlineStyle, Window,
 };
 use libghostty_vt::{
     error::Error,
@@ -40,6 +40,20 @@ pub struct FrameSpan {
 pub struct CursorCell {
     pub x: u16,
     pub y: u16,
+}
+
+/// A clickable website URL and the viewport cells it occupies.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LinkHit {
+    pub url: String,
+    pub ranges: Vec<LinkRange>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LinkRange {
+    pub row: u32,
+    pub start_col: u16,
+    pub end_col: u16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -206,14 +220,16 @@ fn hyperlink_uri(
 }
 
 impl Frame {
-    /// Website URL under a viewport cell, if Cmd+click should open it.
     pub fn url_at(&self, row: u32, col: u16) -> Option<String> {
+        self.link_at(row, col).map(|hit| hit.url)
+    }
+
+    pub fn link_at(&self, row: u32, col: u16) -> Option<LinkHit> {
         let row = row as usize;
         if let Some(uri) = hyperlink_at_cell(self, row, col).filter(|uri| is_web_url(uri)) {
-            return Some(uri);
+            return osc8_hit(self, row, col, &uri);
         }
-        let (text, at) = paragraph_text_at(self, row, col)?;
-        find_web_url_at(&text, at)
+        regex_hit(self, row, col)
     }
 }
 
@@ -229,32 +245,123 @@ fn hyperlink_at_cell(frame: &Frame, row: usize, col: u16) -> Option<String> {
     None
 }
 
-fn paragraph_text_at(frame: &Frame, row: usize, col: u16) -> Option<(String, usize)> {
+fn paragraph_at(frame: &Frame, row: usize, col: u16) -> Option<(String, Vec<(usize, u16)>, usize)> {
     if row >= frame.rows.len() {
         return None;
     }
     let (start, end) = wrapped_range(&frame.rows, row);
     let mut text = String::new();
+    let mut cells = Vec::new();
     let mut click_at = None;
     for r in start..=end {
         let mut x = 0u16;
         for span in &frame.rows[r].spans {
-            let span_end = x.saturating_add(span.columns);
-            if r == row && col >= x && col < span_end && click_at.is_none() {
-                if span.text.is_empty() {
+            if span.text.is_empty() {
+                if r == row && col >= x && col < x.saturating_add(span.columns) && click_at.is_none()
+                {
                     click_at = Some(text.len().saturating_sub(1));
-                } else {
-                    let local = (col - x) as usize;
-                    click_at = Some(text.len() + byte_offset_for_column(&span.text, local));
                 }
+                x = x.saturating_add(span.columns);
+                continue;
             }
-            text.push_str(&span.text);
-            x = span_end;
+            let mut local = 0u16;
+            for ch in span.text.chars() {
+                let cell_col = x.saturating_add(local);
+                if r == row && col == cell_col && click_at.is_none() {
+                    click_at = Some(text.len());
+                }
+                text.push(ch);
+                cells.push((r, cell_col));
+                local = local.saturating_add(1);
+            }
+            if r == row
+                && click_at.is_none()
+                && col >= x
+                && col < x.saturating_add(span.columns)
+            {
+                click_at = Some(text.len().saturating_sub(1));
+            }
+            x = x.saturating_add(span.columns);
         }
     }
     let at = click_at.filter(|_| !text.is_empty())?;
     let at = at.min(text.len().saturating_sub(1));
-    Some((text, at))
+    Some((text, cells, at))
+}
+
+fn osc8_hit(frame: &Frame, row: usize, col: u16, uri: &str) -> Option<LinkHit> {
+    let (start, end) = wrapped_range(&frame.rows, row);
+    let mut cells = Vec::new();
+    let mut found = false;
+    let mut in_run = false;
+    for r in start..=end {
+        let mut x = 0u16;
+        for span in &frame.rows[r].spans {
+            let matches = span.link.as_deref() == Some(uri);
+            for _ in 0..span.columns {
+                if matches {
+                    if r == row && x == col {
+                        found = true;
+                    }
+                    in_run = true;
+                    cells.push((r, x));
+                } else if in_run {
+                    if found {
+                        return Some(LinkHit {
+                            url: uri.to_string(),
+                            ranges: coalesce_ranges(&cells),
+                        });
+                    }
+                    cells.clear();
+                    in_run = false;
+                }
+                x = x.saturating_add(1);
+            }
+        }
+    }
+    if found && !cells.is_empty() {
+        Some(LinkHit {
+            url: uri.to_string(),
+            ranges: coalesce_ranges(&cells),
+        })
+    } else {
+        None
+    }
+}
+
+fn regex_hit(frame: &Frame, row: usize, col: u16) -> Option<LinkHit> {
+    let (text, cells, at) = paragraph_at(frame, row, col)?;
+    let (start, end, url) = find_web_url_at(&text, at)?;
+    let start_char = text[..start].chars().count();
+    let end_char = text[..end].chars().count();
+    if start_char >= cells.len() {
+        return None;
+    }
+    let covered = &cells[start_char..end_char.min(cells.len())];
+    if covered.is_empty() {
+        return None;
+    }
+    Some(LinkHit {
+        url,
+        ranges: coalesce_ranges(covered),
+    })
+}
+
+fn coalesce_ranges(cells: &[(usize, u16)]) -> Vec<LinkRange> {
+    let mut ranges: Vec<LinkRange> = Vec::new();
+    for &(row, col) in cells {
+        match ranges.last_mut() {
+            Some(range) if range.row == row as u32 && range.end_col == col => {
+                range.end_col = col.saturating_add(1);
+            }
+            _ => ranges.push(LinkRange {
+                row: row as u32,
+                start_col: col,
+                end_col: col.saturating_add(1),
+            }),
+        }
+    }
+    ranges
 }
 
 fn wrapped_range(rows: &[FrameRow], row: usize) -> (usize, usize) {
@@ -269,14 +376,7 @@ fn wrapped_range(rows: &[FrameRow], row: usize) -> (usize, usize) {
     (start, end)
 }
 
-fn byte_offset_for_column(text: &str, col: usize) -> usize {
-    text.char_indices()
-        .nth(col)
-        .map(|(i, _)| i)
-        .unwrap_or_else(|| text.len().saturating_sub(1))
-}
-
-fn find_web_url_at(text: &str, at: usize) -> Option<String> {
+fn find_web_url_at(text: &str, at: usize) -> Option<(usize, usize, String)> {
     if text.is_empty() {
         return None;
     }
@@ -298,7 +398,9 @@ fn find_web_url_at(text: &str, at: usize) -> Option<String> {
                 if url.to_ascii_lowercase().starts_with("www.") {
                     url.insert_str(0, "https://");
                 }
-                return is_web_url(&url).then_some(url);
+                if is_web_url(&url) {
+                    return Some((start, end, url));
+                }
             }
             search = start + prefix.len();
         }
@@ -379,13 +481,25 @@ pub fn paint(
     cell: Point<Pixels>,
     font: &Font,
     font_size: Pixels,
+    hovered: Option<&LinkHit>,
     window: &mut Window,
     cx: &mut gpui::App,
 ) {
     window.paint_quad(fill(bounds, frame.background.to_hsla()));
 
+    let mut wash: Hsla = rgb(theme::ACCENT).into();
+    wash.a = 0.22;
+    let link_color: Hsla = rgb(theme::ACCENT).into();
+    let underline = UnderlineStyle {
+        thickness: px(1.0),
+        color: Some(link_color),
+        wavy: false,
+    };
+
     let mut y = bounds.origin.y + theme::TERMINAL_PAD;
     for (row_idx, row) in frame.rows.iter().enumerate() {
+        let highlights = row_highlights(hovered, row_idx);
+
         let mut x = bounds.origin.x + theme::TERMINAL_PAD;
         for span in &row.spans {
             let width = cell.x * span.columns as f32;
@@ -399,6 +513,22 @@ pub fn paint(
                 ));
             }
             x += width;
+        }
+
+        for &(start_col, end_col) in &highlights {
+            let width = cell.x * (end_col.saturating_sub(start_col)) as f32;
+            if width > px(0.0) {
+                window.paint_quad(fill(
+                    Bounds {
+                        origin: point(
+                            bounds.origin.x + theme::TERMINAL_PAD + cell.x * start_col as f32,
+                            y,
+                        ),
+                        size: size(width, cell.y),
+                    },
+                    wash,
+                ));
+            }
         }
 
         // Draw the cursor under glyphs so the current cell stays readable
@@ -417,35 +547,114 @@ pub fn paint(
         }
 
         x = bounds.origin.x + theme::TERMINAL_PAD;
+        let mut col = 0u16;
         for span in &row.spans {
-            let width = cell.x * span.columns as f32;
-            if !span.text.is_empty() {
-                let run_font = if span.bold {
-                    font.clone().bold()
-                } else {
-                    font.clone()
-                };
-                // GPUI's force_width is the advance of *each* glyph, not the
-                // span. Passing the full span width spaced letters apart.
-                let line = window.text_system().shape_line(
-                    SharedString::from(span.text.clone()),
-                    font_size,
-                    &[TextRun {
-                        len: span.text.len(),
-                        font: run_font,
-                        color: span.fg.to_hsla(),
-                        background_color: None,
-                        underline: None,
-                        strikethrough: None,
-                    }],
-                    Some(cell.x),
-                );
-                let _ = line.paint(point(x, y), cell.y, window, cx);
-            }
-            x += width;
+            paint_span_text(
+                span,
+                col,
+                x,
+                y,
+                cell,
+                font,
+                font_size,
+                &highlights,
+                link_color,
+                underline,
+                window,
+                cx,
+            );
+            x += cell.x * span.columns as f32;
+            col = col.saturating_add(span.columns);
         }
 
         y += cell.y;
+    }
+}
+
+fn row_highlights(hovered: Option<&LinkHit>, row: usize) -> Vec<(u16, u16)> {
+    let Some(hit) = hovered else {
+        return Vec::new();
+    };
+    hit.ranges
+        .iter()
+        .filter(|range| range.row as usize == row)
+        .map(|range| (range.start_col, range.end_col))
+        .collect()
+}
+
+fn paint_span_text(
+    span: &FrameSpan,
+    span_col: u16,
+    x: Pixels,
+    y: Pixels,
+    cell: Point<Pixels>,
+    font: &Font,
+    font_size: Pixels,
+    highlights: &[(u16, u16)],
+    link_color: Hsla,
+    underline: UnderlineStyle,
+    window: &mut Window,
+    cx: &mut gpui::App,
+) {
+    let span_end = span_col.saturating_add(span.columns);
+    let mut cursor = span_col;
+    let mut origin_x = x;
+    let mut cuts: Vec<(u16, u16, bool)> = Vec::new();
+    for &(h0, h1) in highlights {
+        let start = h0.max(span_col);
+        let end = h1.min(span_end);
+        if start >= end {
+            continue;
+        }
+        if cursor < start {
+            cuts.push((cursor, start, false));
+        }
+        cuts.push((start, end, true));
+        cursor = end;
+    }
+    if cursor < span_end {
+        cuts.push((cursor, span_end, false));
+    }
+    if cuts.is_empty() {
+        cuts.push((span_col, span_end, false));
+    }
+
+    for (from, to, highlighted) in cuts {
+        let columns = to.saturating_sub(from);
+        let width = cell.x * columns as f32;
+        let relative = from.saturating_sub(span_col);
+        let text: String = span
+            .text
+            .chars()
+            .skip(relative as usize)
+            .take(columns as usize)
+            .collect();
+        if !text.is_empty() {
+            let run_font = if span.bold || highlighted {
+                font.clone().bold()
+            } else {
+                font.clone()
+            };
+            let line = window.text_system().shape_line(
+                SharedString::from(text.clone()),
+                font_size,
+                &[TextRun {
+                    len: text.len(),
+                    font: run_font,
+                    color: if highlighted {
+                        link_color
+                    } else {
+                        span.fg.to_hsla()
+                    },
+                    background_color: None,
+                    underline: highlighted.then_some(underline),
+                    strikethrough: None,
+                }],
+                Some(cell.x),
+            );
+            let _ = line.paint(point(origin_x, y), cell.y, window, cx);
+        }
+        origin_x += width;
     }
 }
 
