@@ -85,7 +85,45 @@ The window title is **Ghostterm**. Your `$SHELL` is used when present (otherwise
 - [ ] Split panes
 - [ ] OSC 7 working directory / remote-aware paths
 - [ ] Underline URLs and paths without holding ⌘
-- [ ] Tests for key encoding, URL/path detection, and shell-exit
+- [ ] Create a test suite (see [Test suite](#test-suite))
+
+## Test suite
+
+Not implemented yet. When we add one, start with unit tests around pure logic, then a few integration checks that do not need to launch the full GPUI window.
+
+### Input
+
+- Shift-produced characters (`:@#!` and the rest of the punctuation set) encode to the PTY
+- ⌘← / ⌘→ send beginning/end of line; ⌥← / ⌥→ send word jumps
+- Reserved shortcuts (⌘Q / ⌘T / ⌘W) are not forwarded as terminal keys
+- Word/line delete sequences once those bindings exist
+
+### Links and paths
+
+- `http://`, `https://`, and `www.` matches, including wrapped lines and trailing punctuation
+- OSC 8 hyperlinks vs autodetection
+- Absolute, `~/`, and `file://` paths; files resolve to the parent directory; missing paths are ignored
+- Hover ranges cover the full URL or path
+
+### Sessions and window
+
+- Top-level shell exit closes that tab
+- Last tab closes the window without quitting the app
+- Nested `exit` (subshell) does not close the tab
+- Adding and closing tabs updates the active index
+
+### Terminal surface
+
+- Selection gestures (drag, double-click word, triple-click line, Option block)
+- Copy/paste once clipboard is wired
+- Scrollback bounds and clear-screen (⌘K)
+- Theme: palette, foreground, background, and cursor actually change
+
+### Settings
+
+- Config file parse/round-trip for the Ghostterm-owned settings (not libghostty)
+- Invalid or missing files fall back to defaults
+- Window position, size, and sidebar split restore
 
 ## License
 
