@@ -8,7 +8,7 @@ use gpui::{
     actions, div, prelude::*, px, rgb, size, AnyView, App, Application, Bounds, Context, KeyBinding,
     MouseButton, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
-use session::Session;
+use session::{Session, SessionEvent};
 
 actions!(ghostterm, [Quit, NewTab, CloseTab]);
 
@@ -20,10 +20,30 @@ struct Workspace {
 impl Workspace {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let first = cx.new(|cx| Session::spawn(0, window, cx));
-        Self {
+        let workspace = Self {
             tabs: vec![first],
             active: 0,
-        }
+        };
+        workspace.subscribe_session(0, window, cx);
+        workspace
+    }
+
+    fn subscribe_session(&self, index: usize, window: &Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get(index).cloned() else {
+            return;
+        };
+        cx.subscribe_in(
+            &tab,
+            window,
+            |this, session, event: &SessionEvent, window, cx| {
+                if matches!(event, SessionEvent::Exited) {
+                    if let Some(index) = this.tabs.iter().position(|tab| tab == session) {
+                        this.close_tab(index, window, cx);
+                    }
+                }
+            },
+        )
+        .detach();
     }
 
     fn add_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -31,6 +51,7 @@ impl Workspace {
         let tab = cx.new(|cx| Session::spawn(index, window, cx));
         self.tabs.push(tab);
         self.active = index;
+        self.subscribe_session(index, window, cx);
         self.focus_active(window, cx);
         cx.notify();
     }
@@ -48,7 +69,7 @@ impl Workspace {
             return;
         }
         if self.tabs.len() == 1 {
-            cx.quit();
+            window.remove_window();
             return;
         }
 

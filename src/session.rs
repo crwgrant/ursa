@@ -5,9 +5,10 @@ use std::{
 };
 
 use gpui::{
-    canvas, div, px, rgb, Bounds, Context, CursorStyle, FocusHandle, InteractiveElement,
-    IntoElement, KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement, Pixels, Render, ScrollWheelEvent, Styled, Window,
+    canvas, div, px, rgb, Bounds, Context, CursorStyle, EventEmitter, FocusHandle,
+    InteractiveElement, IntoElement, KeyDownEvent, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Render, ScrollWheelEvent,
+    Styled, Window,
 };
 use libghostty_vt::{
     key,
@@ -61,6 +62,11 @@ enum Command {
 enum Event {
     Frame(Frame),
     Title(String),
+    Exited,
+}
+
+pub enum SessionEvent {
+    Exited,
 }
 
 pub struct Session {
@@ -96,6 +102,7 @@ impl Session {
         .expect("failed to spawn shell");
 
         let command_tx_pty = command_tx.clone();
+        let event_tx_exit = event_tx.clone();
         thread::Builder::new()
             .name("pty-forward".into())
             .spawn(move || {
@@ -104,6 +111,7 @@ impl Session {
                         break;
                     }
                 }
+                let _ = event_tx_exit.send(Event::Exited);
             })
             .expect("failed to spawn pty forwarder");
 
@@ -114,6 +122,7 @@ impl Session {
 
         cx.spawn(async move |this, cx| {
             while let Ok(event) = event_rx.recv_async().await {
+                let exited = matches!(event, Event::Exited);
                 if this
                     .update(cx, |this, cx| {
                         match event {
@@ -123,10 +132,12 @@ impl Session {
                             }
                             Event::Title(title) if !title.is_empty() => this.title = title,
                             Event::Title(_) => {}
+                            Event::Exited => cx.emit(SessionEvent::Exited),
                         }
                         cx.notify();
                     })
                     .is_err()
+                    || exited
                 {
                     break;
                 }
@@ -305,6 +316,8 @@ impl Session {
         }
     }
 }
+
+impl EventEmitter<SessionEvent> for Session {}
 
 impl Render for Session {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
