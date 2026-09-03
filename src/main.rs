@@ -5,12 +5,17 @@ mod session;
 mod theme;
 
 use gpui::{
-    AnyView, App, Application, Bounds, Context, KeyBinding, MouseButton, SharedString, TitlebarOptions, Window, WindowBounds,
-    WindowOptions, actions, div, prelude::*, px, rgb, size,
+    AnyView, App, Application, Bounds, Context, KeyBinding, Menu, MenuItem, MouseButton, SharedString, TitlebarOptions, Window,
+    WindowBounds, WindowOptions, actions, div, point, prelude::*, px, rgb, size,
 };
 use session::{Session, SessionEvent};
 
-actions!(ghostterm, [Quit, NewTab, CloseTab, Copy, Paste]);
+actions!(ghostterm, [Quit, NewWindow, NewTab, CloseTab, Copy, Paste]);
+
+const APP_ID: &str = "com.crwgrant.ghostterm";
+const WINDOW_WIDTH: f32 = 1100.0;
+const WINDOW_HEIGHT: f32 = 720.0;
+const NEW_WINDOW_OFFSET: f32 = 28.0;
 
 struct Workspace {
     tabs: Vec<gpui::Entity<Session>>,
@@ -305,43 +310,79 @@ impl Render for ActionTooltip {
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(1100.0), px(720.0)), cx);
-
+    let app = Application::new();
+    app.on_reopen(|cx| {
+        if cx.windows().is_empty() {
+            open_workspace_window(cx);
+        }
+    });
+    app.run(|cx: &mut App| {
         cx.on_action(|_: &Quit, cx| cx.quit());
+        cx.on_action(|_: &NewWindow, cx| {
+            open_workspace_window(cx);
+        });
         cx.bind_keys([
             KeyBinding::new("cmd-q", Quit, None),
+            KeyBinding::new("cmd-n", NewWindow, None),
             KeyBinding::new("cmd-t", NewTab, None),
             KeyBinding::new("cmd-w", CloseTab, None),
             KeyBinding::new("cmd-c", Copy, None),
             KeyBinding::new("cmd-v", Paste, None),
         ]);
-
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(TitlebarOptions {
-                    title: Some("Ghostterm".into()),
-                    appears_transparent: false,
-                    traffic_light_position: None,
-                }),
-                focus: true,
-                show: true,
-                kind: gpui::WindowKind::Normal,
-                is_movable: true,
-                display_id: None,
-                window_min_size: Some(size(px(640.0), px(400.0))),
-                window_background: gpui::WindowBackgroundAppearance::Opaque,
-                app_id: None,
-                is_resizable: true,
-                is_minimizable: true,
-                window_decorations: None,
-                tabbing_identifier: None,
+        cx.set_menus(vec![
+            Menu {
+                name: "Ghostterm".into(),
+                items: vec![MenuItem::separator(), MenuItem::action("Quit Ghostterm", Quit)],
             },
-            |window, cx| cx.new(|cx| Workspace::new(window, cx)),
-        )
-        .unwrap();
+            Menu {
+                name: "File".into(),
+                items: vec![
+                    MenuItem::action("New Window", NewWindow),
+                    MenuItem::action("New Tab", NewTab),
+                    MenuItem::separator(),
+                    MenuItem::action("Close", CloseTab),
+                ],
+            },
+            Menu {
+                name: "Edit".into(),
+                items: vec![MenuItem::action("Copy", Copy), MenuItem::action("Paste", Paste)],
+            },
+        ]);
+        cx.set_dock_menu(vec![MenuItem::action("New Window", NewWindow)]);
 
+        open_workspace_window(cx);
         cx.activate(true);
     });
+}
+
+fn open_workspace_window(cx: &mut App) {
+    let _ = cx.open_window(workspace_window_options(cx), |window, cx| cx.new(|cx| Workspace::new(window, cx)));
+}
+
+fn workspace_window_options(cx: &App) -> WindowOptions {
+    let window_size = size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT));
+    let mut bounds = Bounds::centered(None, window_size, cx);
+    let stagger = cx.windows().len() as f32;
+    bounds.origin = bounds.origin + point(px(stagger * NEW_WINDOW_OFFSET), px(stagger * NEW_WINDOW_OFFSET));
+
+    WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(bounds)),
+        titlebar: Some(TitlebarOptions {
+            title: Some("Ghostterm".into()),
+            appears_transparent: false,
+            traffic_light_position: None,
+        }),
+        focus: true,
+        show: true,
+        kind: gpui::WindowKind::Normal,
+        is_movable: true,
+        display_id: None,
+        window_min_size: Some(size(px(640.0), px(400.0))),
+        window_background: gpui::WindowBackgroundAppearance::Opaque,
+        app_id: Some(APP_ID.into()),
+        is_resizable: true,
+        is_minimizable: true,
+        window_decorations: None,
+        tabbing_identifier: Some("Ghostterm".into()),
+    }
 }

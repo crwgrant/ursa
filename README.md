@@ -11,6 +11,7 @@ A macOS terminal emulator built in Rust with [GPUI](https://github.com/zed-indus
 - **⌘-click** `http(s)` URLs to open them in the browser (hold **⌘** to highlight the link first)
 - **⌘-click** filesystem paths to open Finder at that folder (a file path opens the parent directory)
 - Right-click a URL, URI, or path for **Copy**, **Paste**, and **Open Link** (or **Open Folder**)
+- New window with **⌘N** or **File → New Window**; closing the last tab leaves the app running so a Dock click (or ⌘N) can open another
 - Typing `exit` in the top-level shell closes that tab; the last tab closes the window without quitting the app
 
 ## Requirements
@@ -34,6 +35,7 @@ The window title is **Ghostterm**. Your `$SHELL` is used when present (otherwise
 
 | Action | Shortcut |
 | --- | --- |
+| New window | ⌘N |
 | New tab | ⌘T |
 | Close tab | ⌘W |
 | Quit | ⌘Q |
@@ -65,7 +67,7 @@ The window title is **Ghostterm**. Your `$SHELL` is used when present (otherwise
 
 ### Window and sessions
 
-- [ ] New window (⌘N), including reopen from the Dock when no windows are open
+- [x] New window (⌘N), including reopen from the Dock when no windows are open
 - [ ] Remember window position and size across launches
 - [ ] Draggable split to resize the tab sidebar vs the terminal
 - [ ] Drag to reorder tabs in the sidebar
@@ -118,6 +120,7 @@ Not implemented yet. When we add one, start with unit tests around pure logic, t
 - Last tab closes the window without quitting the app
 - Nested `exit` (subshell) does not close the tab
 - Adding and closing tabs updates the active index
+- ⌘N opens another window; Dock click with no windows opens one too
 
 ### Terminal surface
 
