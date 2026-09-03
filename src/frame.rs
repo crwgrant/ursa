@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use gpui::{
-    Bounds, Font, FontStyle, FontWeight, Hsla, Pixels, Point, SharedString, TextRun, UnderlineStyle, Window, fill, point, px,
-    rgb, size,
+    Bounds, Font, FontFallbacks, FontStyle, FontWeight, Hsla, Pixels, Point, SharedString, TextRun, UnderlineStyle, Window, fill,
+    point, px, rgb, size,
 };
 use libghostty_vt::{
     Terminal,
@@ -595,9 +595,18 @@ fn looks_like_path(raw: &str) -> bool {
     if raw.starts_with('/') {
         return raw.len() > 1;
     }
-    (raw.starts_with("./") || raw.starts_with("../") || raw.contains('/'))
+    if is_windows_drive_path(raw) {
+        return true;
+    }
+    let has_separator = raw.contains('/') || raw.contains('\\');
+    (raw.starts_with("./") || raw.starts_with(".\\") || raw.starts_with("../") || raw.starts_with("..\\") || has_separator)
         && !raw.starts_with("http:")
         && !raw.starts_with("https:")
+}
+
+fn is_windows_drive_path(raw: &str) -> bool {
+    let bytes = raw.as_bytes();
+    bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && (bytes[2] == b'\\' || bytes[2] == b'/')
 }
 
 fn folder_from_raw(raw: &str) -> Option<PathBuf> {
@@ -619,14 +628,14 @@ fn expand_user_path(raw: &str) -> Option<PathBuf> {
         return parse_file_uri_rest(rest);
     }
     if raw == "~" {
-        return std::env::var_os("HOME").map(PathBuf::from);
+        return crate::pty::home_dir();
     }
     if let Some(rest) = raw.strip_prefix("~/") {
-        let mut home = PathBuf::from(std::env::var_os("HOME")?);
+        let mut home = crate::pty::home_dir()?;
         home.push(rest);
         return Some(home);
     }
-    if raw.starts_with('/') {
+    if raw.starts_with('/') || is_windows_drive_path(raw) {
         return Some(PathBuf::from(raw));
     }
     std::env::current_dir().ok().map(|cwd| cwd.join(raw))
@@ -830,9 +839,20 @@ pub fn terminal_font() -> Font {
     Font {
         family: SharedString::from(theme::FONT_FAMILY),
         features: Default::default(),
-        fallbacks: None,
+        fallbacks: terminal_font_fallbacks(),
         weight: FontWeight::NORMAL,
         style: FontStyle::Normal,
+    }
+}
+
+fn terminal_font_fallbacks() -> Option<FontFallbacks> {
+    #[cfg(target_os = "windows")]
+    {
+        Some(FontFallbacks::from_fonts(vec!["Consolas".into(), "Courier New".into()]))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        None
     }
 }
 

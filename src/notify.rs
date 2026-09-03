@@ -1,8 +1,6 @@
 use std::time::Duration;
 
-use gpui::{
-    App, Global, InteractiveElement, IntoElement, MouseButton, ParentElement, SharedString, Styled, Timer, div, px, rgb,
-};
+use gpui::{App, Global, InteractiveElement, IntoElement, MouseButton, ParentElement, SharedString, Styled, Timer, div, px, rgb};
 
 use crate::theme;
 

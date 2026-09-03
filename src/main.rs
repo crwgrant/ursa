@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod frame;
 mod input;
 mod notify;
@@ -128,7 +130,7 @@ impl Render for Workspace {
             .size_full()
             .bg(rgb(theme::WINDOW))
             .text_color(rgb(theme::TEXT))
-            .font_family("Menlo")
+            .font_family(theme::UI_FONT_FAMILY)
             .on_action(cx.listener(|this, _: &NewTab, window, cx| this.add_tab(window, cx)))
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| this.close_active_tab(window, cx)))
             .on_action(cx.listener(|this, _: &Copy, _window, cx| this.copy_active(cx)))
@@ -200,7 +202,7 @@ fn new_tab_button(cx: &mut Context<Workspace>) -> impl IntoElement {
         .text_sm()
         .cursor_pointer()
         .hover(|style| style.bg(rgb(theme::TAB_HOVER)))
-        .tooltip(action_tooltip("New Tab", "⌘T"))
+        .tooltip(action_tooltip("New Tab", new_tab_shortcut()))
         .child("+")
         .on_mouse_down(MouseButton::Left, cx.listener(|this, _event, window, cx| this.add_tab(window, cx)))
 }
@@ -219,7 +221,7 @@ fn close_tab_button(index: usize, cx: &mut Context<Workspace>) -> impl IntoEleme
         .text_color(rgb(theme::TEXT_DIM))
         .cursor_pointer()
         .hover(|style| style.bg(rgb(theme::BUTTON)).text_color(rgb(theme::TEXT)))
-        .tooltip(action_tooltip("Close Tab", "⌘W"))
+        .tooltip(action_tooltip("Close Tab", close_tab_shortcut()))
         .child("×")
         .on_mouse_down(
             MouseButton::Left,
@@ -313,6 +315,14 @@ impl Render for ActionTooltip {
     }
 }
 
+fn new_tab_shortcut() -> &'static str {
+    if cfg!(target_os = "macos") { "⌘T" } else { "Ctrl+Shift+T" }
+}
+
+fn close_tab_shortcut() -> &'static str {
+    if cfg!(target_os = "macos") { "⌘W" } else { "Ctrl+Shift+W" }
+}
+
 fn main() {
     let app = Application::new();
     app.on_reopen(|cx| {
@@ -332,6 +342,10 @@ fn main() {
             KeyBinding::new("cmd-w", CloseTab, None),
             KeyBinding::new("cmd-c", Copy, None),
             KeyBinding::new("cmd-v", Paste, None),
+            KeyBinding::new("ctrl-shift-t", NewTab, None),
+            KeyBinding::new("ctrl-shift-w", CloseTab, None),
+            KeyBinding::new("ctrl-shift-c", Copy, None),
+            KeyBinding::new("ctrl-shift-v", Paste, None),
         ]);
         cx.set_menus(vec![
             Menu {

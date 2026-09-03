@@ -1,6 +1,6 @@
 # Ghostterm
 
-A macOS terminal emulator built in Rust with [GPUI](https://github.com/zed-industries/zed) and [libghostty-vt](https://github.com/uzaaft/libghostty-rs). Each window has a left sidebar of sessions (tabs) and a terminal that talks to your login shell over a PTY.
+A terminal emulator built in Rust with [GPUI](https://github.com/zed-industries/zed) and [libghostty-vt](https://github.com/uzaaft/libghostty-rs). Each window has a left sidebar of sessions (tabs) and a terminal that talks to your login shell over a PTY.
 
 ## Features
 
@@ -17,10 +17,10 @@ A macOS terminal emulator built in Rust with [GPUI](https://github.com/zed-indus
 
 ## Requirements
 
-- macOS
+- macOS or Windows
 - [Rust](https://rustup.rs/) (stable)
-- [Xcode](https://developer.apple.com/xcode/) (not only Command Line Tools) so GPUI can compile Metal shaders
 - [Zig](https://ziglang.org/) for the libghostty-vt build
+- On macOS, [Xcode](https://developer.apple.com/xcode/) (not only Command Line Tools) so GPUI can compile Metal shaders
 
 The repo’s `.cargo/config.toml` sets `DEVELOPER_DIR` to `/Applications/Xcode.app/Contents/Developer` when it is not already set.
 
@@ -30,7 +30,7 @@ The repo’s `.cargo/config.toml` sets `DEVELOPER_DIR` to `/Applications/Xcode.a
 cargo run
 ```
 
-The window title is **Ghostterm**. Your `$SHELL` is used when present (otherwise `/bin/zsh`).
+The window title is **Ghostterm**. On macOS, `$SHELL` is used when present (otherwise `/bin/zsh`). On Windows, a Unix-style `$SHELL` such as `/bin/zsh` is ignored. If [Git for Windows](https://gitforwindows.org/) is installed, sessions start Git Bash (`Git\bin\bash.exe`); otherwise Windows PowerShell, or `%COMSPEC%` if PowerShell is missing. A Windows `$SHELL` pointing at an `.exe` still wins when set.
 
 ## Shortcuts
 
@@ -48,6 +48,8 @@ The window title is **Ghostterm**. Your `$SHELL` is used when present (otherwise
 | Copy link | Right-click a URL/path → Copy |
 | Copy selection | ⌘C |
 | Paste | ⌘V or right-click a URL/path → Paste |
+
+On Windows, use **Ctrl+Shift** in place of **⌘** (for example **Ctrl+Shift+T** for a new tab, **Ctrl+Shift+C** / **Ctrl+Shift+V** to copy and paste). **Ctrl+C** still goes to the shell.
 
 ## Roadmap
 
