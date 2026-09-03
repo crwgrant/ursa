@@ -5,6 +5,15 @@ edition = "2021"
 description = "A GPUI terminal emulator powered by libghostty-vt"
 license = "MIT OR Apache-2.0"
 
+[package.metadata.packager]
+product-name = "Ghostterm"
+identifier = "com.crwgrant.ghostterm"
+before-packaging-command = "cargo build --release"
+icons = ["packaging/AppIcon.icns"]
+
+[package.metadata.packager.macos]
+minimum-system-version = "15.0"
+
 [dependencies]
 flume = "0.11"
 gpui = "0.2.2"
