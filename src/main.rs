@@ -1,5 +1,6 @@
 mod frame;
 mod input;
+mod notify;
 mod pty;
 mod session;
 mod theme;
@@ -30,6 +31,7 @@ impl Workspace {
             active: 0,
         };
         workspace.subscribe_session(0, window, cx);
+        cx.observe_global::<notify::Notifications>(|_, cx| cx.notify()).detach();
         workspace
     }
 
@@ -121,6 +123,7 @@ impl Render for Workspace {
             .collect();
 
         div()
+            .relative()
             .flex()
             .size_full()
             .bg(rgb(theme::WINDOW))
@@ -132,6 +135,7 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &Paste, _window, cx| this.paste_active(cx)))
             .child(self.render_sidebar(&tabs, cx))
             .child(self.render_terminal())
+            .child(notify::overlay(cx))
     }
 }
 
