@@ -1,5 +1,6 @@
 use std::{
     io::{Read, Write},
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     thread,
 };
@@ -26,11 +27,14 @@ pub fn spawn_shell(
         pixel_height: cell_height as u16,
     })?;
 
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+    let shell = default_shell();
     let mut cmd = CommandBuilder::new(&shell);
+    if is_powershell(&shell) {
+        cmd.arg("-NoLogo");
+    }
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
-    if let Ok(home) = std::env::var("HOME") {
+    if let Some(home) = home_dir() {
         cmd.cwd(home);
     }
 
@@ -59,6 +63,60 @@ pub fn spawn_shell(
         writer: Arc::new(Mutex::new(writer)),
         master: Arc::new(Mutex::new(master)),
     })
+}
+
+pub fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
+
+fn default_shell() -> String {
+    #[cfg(windows)]
+    {
+        windows_shell()
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into())
+    }
+}
+
+#[cfg(windows)]
+fn windows_shell() -> String {
+    if let Ok(shell) = std::env::var("SHELL") {
+        if !shell.is_empty() && !shell.starts_with('/') {
+            return shell;
+        }
+    }
+
+    let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+    let powershell = PathBuf::from(&system_root)
+        .join("System32")
+        .join("WindowsPowerShell")
+        .join("v1.0")
+        .join("powershell.exe");
+    if powershell.is_file() {
+        return powershell.to_string_lossy().into_owned();
+    }
+
+    std::env::var("COMSPEC")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| {
+            PathBuf::from(system_root)
+                .join("System32")
+                .join("cmd.exe")
+                .to_string_lossy()
+                .into_owned()
+        })
+}
+
+fn is_powershell(shell: &str) -> bool {
+    Path::new(shell)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .is_some_and(|stem| stem.eq_ignore_ascii_case("powershell") || stem.eq_ignore_ascii_case("pwsh"))
 }
 
 pub fn write_pty(writer: &Mutex<Box<dyn Write + Send>>, data: &[u8]) {

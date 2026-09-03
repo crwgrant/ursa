@@ -57,14 +57,14 @@ fn macos_line_editing(keystroke: &Keystroke) -> Option<EncodedKey> {
     }
 
     let bytes: &[u8] = match (mods.platform, mods.alt, keystroke.key.as_str()) {
-        (true, false, "left") => b"\x01",         // Ctrl-A, beginning of line
-        (true, false, "right") => b"\x05",        // Ctrl-E, end of line
-        (true, false, "backspace") => b"\x15",    // Ctrl-U, kill to start of line
-        (true, false, "delete") => b"\x0b",       // Ctrl-K, kill to end of line
-        (false, true, "left") => b"\x1bb",        // ESC b, backward-word
-        (false, true, "right") => b"\x1bf",       // ESC f, forward-word
+        (true, false, "left") => b"\x01",          // Ctrl-A, beginning of line
+        (true, false, "right") => b"\x05",         // Ctrl-E, end of line
+        (true, false, "backspace") => b"\x15",     // Ctrl-U, kill to start of line
+        (true, false, "delete") => b"\x0b",        // Ctrl-K, kill to end of line
+        (false, true, "left") => b"\x1bb",         // ESC b, backward-word
+        (false, true, "right") => b"\x1bf",        // ESC f, forward-word
         (false, true, "backspace") => b"\x1b\x7f", // ESC DEL, backward-kill-word
-        (false, true, "delete") => b"\x1bd",      // ESC d, kill-word
+        (false, true, "delete") => b"\x1bd",       // ESC d, kill-word
         _ => return None,
     };
 

@@ -537,7 +537,10 @@ fn link_menu_item(
 }
 
 fn reserved_shortcut(modifiers: &gpui::Modifiers, key: &str) -> bool {
-    modifiers.platform && matches!(key, "q" | "t" | "w" | "n" | "c" | "v")
+    if modifiers.platform && matches!(key, "q" | "t" | "w" | "n" | "c" | "v") {
+        return true;
+    }
+    modifiers.control && modifiers.shift && matches!(key, "t" | "w" | "c" | "v")
 }
 
 fn empty_frame() -> Frame {

@@ -1,6 +1,17 @@
 use gpui::{Pixels, px};
 
+#[cfg(target_os = "macos")]
 pub const FONT_FAMILY: &str = "Menlo";
+#[cfg(target_os = "windows")]
+pub const FONT_FAMILY: &str = "Cascadia Mono";
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub const FONT_FAMILY: &str = "monospace";
+
+#[cfg(target_os = "macos")]
+pub const UI_FONT_FAMILY: &str = "Menlo";
+#[cfg(not(target_os = "macos"))]
+pub const UI_FONT_FAMILY: &str = ".SystemUIFont";
+
 pub const FONT_SIZE: f32 = 13.0;
 pub const LINE_HEIGHT: f32 = 1.35;
 pub const SIDEBAR_WIDTH: f32 = 220.0;
