@@ -202,11 +202,48 @@ impl Workspace {
                             .map(|(index, title, selected)| tab_row(*index, title.clone(), *selected, cx)),
                     ),
             )
+            .child(settings_button())
     }
 
     fn render_terminal(&self) -> impl IntoElement {
         div().flex_1().h_full().min_w_0().child(self.tabs[self.active].clone())
     }
+}
+
+fn settings_button() -> impl IntoElement {
+    div()
+        .px_2()
+        .py_2()
+        .border_t_1()
+        .border_color(rgb(theme::SIDEBAR_BORDER))
+        .flex_shrink_0()
+        .child(
+            div()
+                .id("open-settings")
+                .w_full()
+                .rounded_md()
+                .px_3()
+                .py_2()
+                .flex()
+                .items_center()
+                .gap_2()
+                .cursor_pointer()
+                .hover(|style| style.bg(rgb(theme::TAB_HOVER)))
+                .tooltip(action_tooltip("Settings", settings_shortcut()))
+                .child(div().w(px(6.0)).h(px(6.0)).rounded_full().bg(rgb(theme::TEXT_DIM)))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_sm()
+                        .text_color(rgb(theme::TEXT_DIM))
+                        .child("Settings"),
+                )
+                .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                    crate::settings::open(cx);
+                    cx.stop_propagation();
+                }),
+        )
 }
 
 fn new_tab_button(cx: &mut Context<Workspace>) -> impl IntoElement {
@@ -342,6 +379,10 @@ fn new_tab_shortcut() -> &'static str {
 
 fn close_tab_shortcut() -> &'static str {
     if cfg!(target_os = "macos") { "⌘W" } else { "Ctrl+Shift+W" }
+}
+
+fn settings_shortcut() -> &'static str {
+    if cfg!(target_os = "macos") { "⌘," } else { "Ctrl+," }
 }
 
 fn main() {
