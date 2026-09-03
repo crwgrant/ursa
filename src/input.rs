@@ -79,10 +79,11 @@ fn macos_line_editing(keystroke: &Keystroke) -> Option<EncodedKey> {
 }
 
 fn printable_text(keystroke: &Keystroke) -> Option<String> {
-    let text = keystroke.key_char.as_deref().filter(|text| !text.is_empty()).or_else(|| {
-        let key = keystroke.key.as_str();
-        (key.chars().count() == 1).then_some(key)
-    })?;
+    let text = keystroke
+        .key_char
+        .as_deref()
+        .filter(|text| !text.is_empty())
+        .or_else(|| named_printable_key(&keystroke.key))?;
 
     if text
         .chars()
@@ -91,6 +92,17 @@ fn printable_text(keystroke: &Keystroke) -> Option<String> {
         Some(text.to_string())
     } else {
         None
+    }
+}
+
+/// GPUI names Space `"space"` and, on Windows, never fills `key_char` for it
+/// (`VK_SPACE` is treated as an immutable key). Without UTF-8 text, libghostty
+/// encodes nothing and the space is dropped.
+fn named_printable_key(key: &str) -> Option<&str> {
+    match key {
+        "space" | " " => Some(" "),
+        key if key.chars().count() == 1 => Some(key),
+        _ => None,
     }
 }
 
@@ -160,7 +172,7 @@ fn map_key(name: &str) -> Option<(Key, char, bool)> {
         "&" => (Key::Digit7, '7', true),
         "*" => (Key::Digit8, '8', true),
         "(" => (Key::Digit9, '9', true),
-        "space" => (Key::Space, ' ', false),
+        "space" | " " => (Key::Space, ' ', false),
         "enter" | "return" => (Key::Enter, '\0', false),
         "tab" => (Key::Tab, '\0', false),
         "backspace" => (Key::Backspace, '\0', false),
