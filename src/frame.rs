@@ -57,6 +57,22 @@ pub enum LinkAction {
     OpenFolder(PathBuf),
 }
 
+impl LinkAction {
+    pub fn clipboard_text(&self) -> String {
+        match self {
+            Self::OpenUrl(url) => url.clone(),
+            Self::OpenFolder(path) => path.to_string_lossy().into_owned(),
+        }
+    }
+
+    pub fn open(&self, cx: &mut gpui::App) {
+        match self {
+            Self::OpenUrl(url) => cx.open_url(url),
+            Self::OpenFolder(path) => cx.open_with_system(path),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LinkRange {
     pub row: u32,
