@@ -30,7 +30,7 @@ The repo’s `.cargo/config.toml` sets `DEVELOPER_DIR` to `/Applications/Xcode.a
 cargo run
 ```
 
-The window title is **Ghostterm**. On macOS, `$SHELL` is used when present (otherwise `/bin/zsh`). On Windows, a Unix-style `$SHELL` such as `/bin/zsh` is ignored; Ghostterm starts Windows PowerShell, or `%COMSPEC%` if PowerShell is missing.
+The window title is **Ghostterm**. On macOS, `$SHELL` is used when present (otherwise `/bin/zsh`). On Windows, a Unix-style `$SHELL` such as `/bin/zsh` is ignored. If [Git for Windows](https://gitforwindows.org/) is installed, sessions start Git Bash (`Git\bin\bash.exe`); otherwise Windows PowerShell, or `%COMSPEC%` if PowerShell is missing. A Windows `$SHELL` pointing at an `.exe` still wins when set.
 
 ## Shortcuts
 
