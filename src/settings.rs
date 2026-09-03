@@ -20,6 +20,7 @@ enum MenuKind {
     FontFamily,
     FontSize,
     Cursor,
+    Theme,
 }
 
 pub struct SettingsPage {
@@ -86,6 +87,14 @@ impl SettingsPage {
         cx.notify();
     }
 
+    fn select_theme(&mut self, theme: theme::AppTheme, cx: &mut Context<Self>) {
+        config::update(cx, |config| {
+            config.theme = theme;
+        });
+        self.open_menu = None;
+        cx.notify();
+    }
+
     fn handle_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
         if event.keystroke.key == "escape" && self.open_menu.take().is_some() {
             cx.stop_propagation();
@@ -118,7 +127,7 @@ pub fn open(cx: &mut App) {
 }
 
 fn window_options(cx: &App) -> WindowOptions {
-    let bounds = Bounds::centered(None, size(px(520.0), px(440.0)), cx);
+    let bounds = Bounds::centered(None, size(px(520.0), px(500.0)), cx);
     WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: Some(TitlebarOptions {
@@ -131,7 +140,7 @@ fn window_options(cx: &App) -> WindowOptions {
         kind: gpui::WindowKind::Normal,
         is_movable: true,
         display_id: None,
-        window_min_size: Some(size(px(420.0), px(360.0))),
+        window_min_size: Some(size(px(420.0), px(400.0))),
         window_background: gpui::WindowBackgroundAppearance::Opaque,
         app_id: Some(crate::APP_ID.into()),
         is_resizable: true,
@@ -147,8 +156,10 @@ impl Render for SettingsPage {
         let family = config.resolved_font_family();
         let font_size = config.font_size;
         let cursor_shape = config.cursor_shape;
+        let app_theme = config.theme;
         let path = config::display_path(cx);
         let error = config::load_error(cx);
+        let colors = theme::colors(cx);
         let open_menu = self.open_menu;
         let menu: Option<AnyElement> = open_menu.map(|(kind, position)| match kind {
             MenuKind::FontFamily => {
@@ -196,6 +207,22 @@ impl Render for SettingsPage {
                     .collect();
                 dropdown_overlay("cursor-menu", position, items, cx).into_any_element()
             }
+            MenuKind::Theme => {
+                let items: Vec<_> = theme::AppTheme::all()
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, choice)| {
+                        dropdown_item(
+                            ("theme-choice", index).into(),
+                            choice.label().to_string(),
+                            choice == app_theme,
+                            cx,
+                            move |this, cx| this.select_theme(choice, cx),
+                        )
+                    })
+                    .collect();
+                dropdown_overlay("theme-menu", position, items, cx).into_any_element()
+            }
         });
 
         div()
@@ -205,8 +232,8 @@ impl Render for SettingsPage {
             .size_full()
             .flex()
             .flex_col()
-            .bg(rgb(theme::WINDOW))
-            .text_color(rgb(theme::TEXT))
+            .bg(rgb(colors.window))
+            .text_color(rgb(colors.text))
             .font_family(theme::UI_FONT_FAMILY)
             .on_key_down(cx.listener(|this, event, _window, cx| this.handle_key(event, cx)))
             .child(
@@ -216,40 +243,42 @@ impl Render for SettingsPage {
                     .gap_5()
                     .flex()
                     .flex_col()
-                    .child(section_label("Font"))
+                    .child(section_label("Appearance", colors))
+                    .child(theme_row(app_theme, cx))
+                    .child(section_label("Font", colors))
                     .child(font_family_row(family.clone(), cx))
                     .child(font_size_row(font_size, cx))
-                    .child(section_label("Terminal"))
+                    .child(section_label("Terminal", colors))
                     .child(cursor_row(cursor_shape, cx))
-                    .child(scrollback_row(self.scrollback.clone()))
-                    .child(section_label("Config file"))
-                    .child(div().text_xs().text_color(rgb(theme::TEXT_DIM)).child(path))
+                    .child(scrollback_row(self.scrollback.clone(), colors))
+                    .child(section_label("Config file", colors))
+                    .child(div().text_xs().text_color(rgb(colors.text_dim)).child(path))
                     .children(error.map(|message| {
                         div()
                             .text_xs()
-                            .text_color(rgb(theme::ACCENT))
+                            .text_color(rgb(colors.accent))
                             .child(format!("Could not reload file: {message}"))
                     }))
                     .child(
                         div()
                             .flex()
                             .gap_2()
-                            .child(text_button("open-config", "Open File", |cx| {
+                            .child(text_button("open-config", "Open File", colors, |cx| {
                                 if let Some(path) = config::ensure_file(cx) {
                                     cx.open_with_system(&path);
                                 }
                             }))
-                            .child(text_button("reveal-config", reveal_label(), |cx| {
+                            .child(text_button("reveal-config", reveal_label(), colors, |cx| {
                                 if let Some(path) = config::ensure_file(cx) {
                                     cx.reveal_path(&path);
                                 }
                             }))
-                            .child(text_button("reload-config", "Reload", |cx| match config::reload(cx) {
+                            .child(text_button("reload-config", "Reload", colors, |cx| match config::reload(cx) {
                                 Ok(()) => notify::show(cx, "Reloaded settings"),
                                 Err(error) => notify::show(cx, format!("Config file error: {error}")),
                             })),
                     )
-                    .child(text_button("reset-config", "Reset to Defaults", |cx| {
+                    .child(text_button("reset-config", "Reset to Defaults", colors, |cx| {
                         config::reset(cx);
                         notify::show(cx, "Settings reset");
                     })),
@@ -259,10 +288,10 @@ impl Render for SettingsPage {
                     .px_5()
                     .py_3()
                     .border_t_1()
-                    .border_color(rgb(theme::SIDEBAR_BORDER))
+                    .border_color(rgb(colors.sidebar_border))
                     .text_xs()
-                    .text_color(rgb(theme::TEXT_DIM))
-                    .child("Font and cursor changes apply immediately. Scrollback saves when the field loses focus."),
+                    .text_color(rgb(colors.text_dim))
+                    .child("Theme, font, and cursor changes apply immediately. Scrollback saves when the field loses focus."),
             )
             .children(menu)
     }
@@ -280,6 +309,10 @@ fn cursor_row(shape: config::CursorShape, cx: &mut Context<SettingsPage>) -> imp
     dropdown_row("cursor-shape", "Cursor", shape.label().to_string(), MenuKind::Cursor, cx)
 }
 
+fn theme_row(app_theme: theme::AppTheme, cx: &mut Context<SettingsPage>) -> impl IntoElement {
+    dropdown_row("app-theme", "Theme", app_theme.label().to_string(), MenuKind::Theme, cx)
+}
+
 fn dropdown_row(
     id: &'static str,
     label: &'static str,
@@ -287,6 +320,7 @@ fn dropdown_row(
     kind: MenuKind,
     cx: &mut Context<SettingsPage>,
 ) -> impl IntoElement {
+    let colors = theme::colors(cx);
     div()
         .flex()
         .items_center()
@@ -304,13 +338,13 @@ fn dropdown_row(
                 .h(px(26.0))
                 .px_2()
                 .rounded_md()
-                .bg(rgb(theme::BUTTON))
+                .bg(rgb(colors.button))
                 .border_1()
-                .border_color(rgb(theme::SIDEBAR_BORDER))
+                .border_color(rgb(colors.sidebar_border))
                 .cursor_pointer()
-                .hover(|style| style.bg(rgb(theme::TAB_HOVER)))
+                .hover(move |style| style.bg(rgb(colors.tab_hover)))
                 .child(div().flex_1().min_w_0().text_sm().text_ellipsis().child(value))
-                .child(div().text_xs().text_color(rgb(theme::TEXT_DIM)).child("▾"))
+                .child(div().text_xs().text_color(rgb(colors.text_dim)).child("▾"))
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, event, _window, cx| this.toggle_menu(kind, event, cx)),
@@ -324,6 +358,7 @@ fn dropdown_overlay(
     items: Vec<impl IntoElement>,
     cx: &mut Context<SettingsPage>,
 ) -> impl IntoElement {
+    let colors = theme::colors(cx);
     div()
         .absolute()
         .top_0()
@@ -348,9 +383,9 @@ fn dropdown_overlay(
                     .overflow_y_scroll()
                     .py_1()
                     .rounded_md()
-                    .bg(rgb(theme::TOOLTIP))
+                    .bg(rgb(colors.tooltip))
                     .border_1()
-                    .border_color(rgb(theme::SIDEBAR_BORDER))
+                    .border_color(rgb(colors.sidebar_border))
                     .shadow_md()
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .children(items),
@@ -365,6 +400,7 @@ fn dropdown_item(
     cx: &mut Context<SettingsPage>,
     on_click: impl Fn(&mut SettingsPage, &mut Context<SettingsPage>) + 'static,
 ) -> impl IntoElement {
+    let colors = theme::colors(cx);
     let on_click: std::rc::Rc<dyn Fn(&mut SettingsPage, &mut Context<SettingsPage>)> = std::rc::Rc::new(on_click);
     div()
         .id(id)
@@ -372,14 +408,14 @@ fn dropdown_item(
         .px_3()
         .py_1()
         .text_sm()
-        .text_color(if selected { rgb(theme::ACCENT) } else { rgb(theme::TEXT) })
+        .text_color(if selected { rgb(colors.accent) } else { rgb(colors.text) })
         .bg(if selected {
-            rgb(theme::TAB_ACTIVE)
+            rgb(colors.tab_active)
         } else {
-            rgb(theme::TOOLTIP)
+            rgb(colors.tooltip)
         })
         .cursor_pointer()
-        .hover(|style| style.bg(rgb(theme::TAB_HOVER)))
+        .hover(move |style| style.bg(rgb(colors.tab_hover)))
         .child(label)
         .on_mouse_down(
             MouseButton::Left,
@@ -528,6 +564,7 @@ impl Render for ScrollbackField {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focused = self.focus.is_focused(window);
         let selected = focused && self.selected;
+        let colors = theme::colors(cx);
         div()
             .id("scrollback-field")
             .track_focus(&self.focus)
@@ -538,15 +575,15 @@ impl Render for ScrollbackField {
             .px_2()
             .rounded_md()
             .bg(if selected {
-                rgb(theme::TAB_ACTIVE)
+                rgb(colors.tab_active)
             } else {
-                rgb(theme::BUTTON)
+                rgb(colors.button)
             })
             .border_1()
             .border_color(if focused {
-                rgb(theme::ACCENT)
+                rgb(colors.accent)
             } else {
-                rgb(theme::SIDEBAR_BORDER)
+                rgb(colors.sidebar_border)
             })
             .cursor(CursorStyle::IBeam)
             .on_key_down(cx.listener(|this, event, _window, cx| this.handle_key(event, cx)))
@@ -571,7 +608,7 @@ impl Render for ScrollbackField {
                             .ml(px(1.0))
                             .w(px(1.5))
                             .h(px(14.0))
-                            .bg(rgb(theme::TEXT))
+                            .bg(rgb(colors.text))
                             .rounded_sm()
                             .with_animation(
                                 "scrollback-caret",
@@ -583,7 +620,7 @@ impl Render for ScrollbackField {
     }
 }
 
-fn scrollback_row(field: Entity<ScrollbackField>) -> impl IntoElement {
+fn scrollback_row(field: Entity<ScrollbackField>, colors: theme::Colors) -> impl IntoElement {
     div()
         .flex()
         .items_center()
@@ -596,29 +633,29 @@ fn scrollback_row(field: Entity<ScrollbackField>) -> impl IntoElement {
                 .items_center()
                 .gap_2()
                 .child(field)
-                .child(div().text_sm().text_color(rgb(theme::TEXT_DIM)).child("lines")),
+                .child(div().text_sm().text_color(rgb(colors.text_dim)).child("lines")),
         )
 }
 
-fn section_label(label: &'static str) -> impl IntoElement {
+fn section_label(label: &'static str, colors: theme::Colors) -> impl IntoElement {
     div()
         .text_xs()
         .font_weight(gpui::FontWeight::SEMIBOLD)
-        .text_color(rgb(theme::TEXT_DIM))
+        .text_color(rgb(colors.text_dim))
         .child(label)
 }
 
-fn text_button(id: &'static str, label: &'static str, on_click: fn(&mut App)) -> impl IntoElement {
+fn text_button(id: &'static str, label: &'static str, colors: theme::Colors, on_click: fn(&mut App)) -> impl IntoElement {
     div()
         .id(id)
         .px_3()
         .py_1()
         .rounded_md()
-        .bg(rgb(theme::BUTTON))
+        .bg(rgb(colors.button))
         .text_xs()
-        .text_color(rgb(theme::TEXT))
+        .text_color(rgb(colors.text))
         .cursor_pointer()
-        .hover(|style| style.bg(rgb(theme::TAB_HOVER)))
+        .hover(move |style| style.bg(rgb(colors.tab_hover)))
         .child(label)
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
             on_click(cx);

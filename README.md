@@ -13,7 +13,7 @@ A terminal emulator built in Rust with [GPUI](https://github.com/zed-industries/
 - Right-click a URL, URI, or path for **Copy**, **Paste**, and **Open Link** (or **Open Folder**)
 - In-app toasts for copy and paste feedback (bottom-right, click or wait to dismiss)
 - **⌘K** clears the screen and scrollback; the shell redraws the prompt at the top
-- Settings window (**⌘,** or **Ghostterm → Settings**) for font family, size, cursor style, and scrollback; values are stored in a Ghostterm-owned config file you can also edit by hand
+- Settings window (**⌘,** or **Ghostterm → Settings**) for theme, font family, size, cursor style, and scrollback; values are stored in a Ghostterm-owned config file you can also edit by hand
 - New window with **⌘N** or **File → New Window**; closing the last tab leaves the app running so a Dock click (or ⌘N) can open another
 - Typing `exit` in the top-level shell closes that tab; the last tab closes the window without quitting the app
 
@@ -70,6 +70,9 @@ Ghostterm reads a TOML file it owns (not libghostty). The file is created the fi
 family = "Menlo"
 size = 13
 
+[appearance]
+theme = "tokyo-night" # catppuccin-mocha, gruvbox-dark, one-dark, nord, solarized-light
+
 [terminal]
 scrollback_lines = 2000
 cursor = "bar" # or "block"
@@ -112,8 +115,7 @@ The Settings window writes this file when you change a value. Editing the file b
 ### Config
 
 - [x] Settings UI and config file owned by Ghostterm (not libghostty): a basic menu or window plus a user-editable file for common options as we add them
-- [x] Font family, size, cursor style, and scrollback length
-- [ ] Colors / theme in the config file
+- [x] Font family, size, cursor style, scrollback length, and app theme
 - [ ] Input and click behavior (including ⌘-click file vs folder)
 
 ### Later

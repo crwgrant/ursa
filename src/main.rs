@@ -143,12 +143,13 @@ impl Render for Workspace {
             })
             .collect();
 
+        let colors = theme::colors(cx);
         div()
             .relative()
             .flex()
             .size_full()
-            .bg(rgb(theme::WINDOW))
-            .text_color(rgb(theme::TEXT))
+            .bg(rgb(colors.window))
+            .text_color(rgb(colors.text))
             .font_family(theme::UI_FONT_FAMILY)
             .on_action(cx.listener(|this, _: &NewTab, window, cx| this.add_tab(window, cx)))
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| this.close_active_tab(window, cx)))
@@ -164,12 +165,13 @@ impl Render for Workspace {
 
 impl Workspace {
     fn render_sidebar(&self, tabs: &[(usize, SharedString, bool)], cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = theme::colors(cx);
         div()
             .w(px(theme::SIDEBAR_WIDTH))
             .h_full()
-            .bg(rgb(theme::SIDEBAR))
+            .bg(rgb(colors.sidebar))
             .border_r_1()
-            .border_color(rgb(theme::SIDEBAR_BORDER))
+            .border_color(rgb(colors.sidebar_border))
             .flex()
             .flex_col()
             .child(
@@ -183,7 +185,7 @@ impl Workspace {
                         div()
                             .text_xs()
                             .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(rgb(theme::TEXT_DIM))
+                            .text_color(rgb(colors.text_dim))
                             .child("SESSIONS"),
                     )
                     .child(new_tab_button(cx)),
@@ -202,7 +204,7 @@ impl Workspace {
                             .map(|(index, title, selected)| tab_row(*index, title.clone(), *selected, cx)),
                     ),
             )
-            .child(settings_button())
+            .child(settings_button(cx))
     }
 
     fn render_terminal(&self) -> impl IntoElement {
@@ -210,12 +212,13 @@ impl Workspace {
     }
 }
 
-fn settings_button() -> impl IntoElement {
+fn settings_button(cx: &App) -> impl IntoElement {
+    let colors = theme::colors(cx);
     div()
         .px_2()
         .py_2()
         .border_t_1()
-        .border_color(rgb(theme::SIDEBAR_BORDER))
+        .border_color(rgb(colors.sidebar_border))
         .flex_shrink_0()
         .child(
             div()
@@ -228,15 +231,15 @@ fn settings_button() -> impl IntoElement {
                 .items_center()
                 .gap_2()
                 .cursor_pointer()
-                .hover(|style| style.bg(rgb(theme::TAB_HOVER)))
+                .hover(move |style| style.bg(rgb(colors.tab_hover)))
                 .tooltip(action_tooltip("Settings", settings_shortcut()))
-                .child(div().w(px(6.0)).h(px(6.0)).rounded_full().bg(rgb(theme::TEXT_DIM)))
+                .child(div().w(px(6.0)).h(px(6.0)).rounded_full().bg(rgb(colors.text_dim)))
                 .child(
                     div()
                         .flex_1()
                         .min_w_0()
                         .text_sm()
-                        .text_color(rgb(theme::TEXT_DIM))
+                        .text_color(rgb(colors.text_dim))
                         .child("Settings"),
                 )
                 .on_mouse_down(MouseButton::Left, |_, _, cx| {
@@ -247,6 +250,7 @@ fn settings_button() -> impl IntoElement {
 }
 
 fn new_tab_button(cx: &mut Context<Workspace>) -> impl IntoElement {
+    let colors = theme::colors(cx);
     div()
         .id("new-tab")
         .h(px(22.0))
@@ -255,17 +259,18 @@ fn new_tab_button(cx: &mut Context<Workspace>) -> impl IntoElement {
         .flex()
         .items_center()
         .justify_center()
-        .bg(rgb(theme::BUTTON))
-        .text_color(rgb(theme::TEXT))
+        .bg(rgb(colors.button))
+        .text_color(rgb(colors.text))
         .text_sm()
         .cursor_pointer()
-        .hover(|style| style.bg(rgb(theme::TAB_HOVER)))
+        .hover(move |style| style.bg(rgb(colors.tab_hover)))
         .tooltip(action_tooltip("New Tab", new_tab_shortcut()))
         .child("+")
         .on_mouse_down(MouseButton::Left, cx.listener(|this, _event, window, cx| this.add_tab(window, cx)))
 }
 
 fn close_tab_button(index: usize, cx: &mut Context<Workspace>) -> impl IntoElement {
+    let colors = theme::colors(cx);
     div()
         .id(("tab-close", index))
         .h(px(18.0))
@@ -276,9 +281,9 @@ fn close_tab_button(index: usize, cx: &mut Context<Workspace>) -> impl IntoEleme
         .justify_center()
         .flex_shrink_0()
         .text_xs()
-        .text_color(rgb(theme::TEXT_DIM))
+        .text_color(rgb(colors.text_dim))
         .cursor_pointer()
-        .hover(|style| style.bg(rgb(theme::BUTTON)).text_color(rgb(theme::TEXT)))
+        .hover(move |style| style.bg(rgb(colors.button)).text_color(rgb(colors.text)))
         .tooltip(action_tooltip("Close Tab", close_tab_shortcut()))
         .child("×")
         .on_mouse_down(
@@ -291,10 +296,11 @@ fn close_tab_button(index: usize, cx: &mut Context<Workspace>) -> impl IntoEleme
 }
 
 fn tab_row(index: usize, title: SharedString, selected: bool, cx: &mut Context<Workspace>) -> impl IntoElement {
+    let colors = theme::colors(cx);
     let background = if selected {
-        rgb(theme::TAB_ACTIVE)
+        rgb(colors.tab_active)
     } else {
-        rgb(theme::SIDEBAR)
+        rgb(colors.sidebar)
     };
 
     div()
@@ -305,7 +311,7 @@ fn tab_row(index: usize, title: SharedString, selected: bool, cx: &mut Context<W
         .py_2()
         .bg(background)
         .cursor_pointer()
-        .hover(|style| if selected { style } else { style.bg(rgb(theme::TAB_HOVER)) })
+        .hover(move |style| if selected { style } else { style.bg(rgb(colors.tab_hover)) })
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, _event, window, cx| this.select_tab(index, window, cx)),
@@ -317,9 +323,9 @@ fn tab_row(index: usize, title: SharedString, selected: bool, cx: &mut Context<W
                 .gap_2()
                 .w_full()
                 .child(div().w(px(6.0)).h(px(6.0)).rounded_full().bg(if selected {
-                    rgb(theme::ACCENT)
+                    rgb(colors.accent)
                 } else {
-                    rgb(theme::TEXT_DIM)
+                    rgb(colors.text_dim)
                 }))
                 .child(
                     div()
@@ -327,7 +333,7 @@ fn tab_row(index: usize, title: SharedString, selected: bool, cx: &mut Context<W
                         .min_w_0()
                         .text_sm()
                         .text_ellipsis()
-                        .text_color(if selected { rgb(theme::TEXT) } else { rgb(theme::TEXT_DIM) })
+                        .text_color(if selected { rgb(colors.text) } else { rgb(colors.text_dim) })
                         .child(title),
                 )
                 .child(close_tab_button(index, cx)),
@@ -355,7 +361,8 @@ fn action_tooltip(
 }
 
 impl Render for ActionTooltip {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = theme::colors(cx);
         div()
             .flex()
             .items_center()
@@ -363,13 +370,13 @@ impl Render for ActionTooltip {
             .px_2()
             .py_1()
             .rounded_md()
-            .bg(rgb(theme::TOOLTIP))
+            .bg(rgb(colors.tooltip))
             .border_1()
-            .border_color(rgb(theme::SIDEBAR_BORDER))
+            .border_color(rgb(colors.sidebar_border))
             .shadow_md()
             .text_xs()
-            .child(div().text_color(rgb(theme::TEXT)).child(self.label.clone()))
-            .child(div().text_color(rgb(theme::TEXT_DIM)).child(self.shortcut.clone()))
+            .child(div().text_color(rgb(colors.text)).child(self.label.clone()))
+            .child(div().text_color(rgb(colors.text_dim)).child(self.shortcut.clone()))
     }
 }
 

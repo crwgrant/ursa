@@ -56,6 +56,7 @@ pub struct Config {
     pub font_size: f32,
     pub scrollback_lines: u32,
     pub cursor_shape: CursorShape,
+    pub theme: theme::AppTheme,
 }
 
 impl Default for Config {
@@ -65,6 +66,7 @@ impl Default for Config {
             font_size: theme::FONT_SIZE,
             scrollback_lines: DEFAULT_SCROLLBACK,
             cursor_shape: CursorShape::Bar,
+            theme: theme::AppTheme::TokyoNight,
         }
     }
 }
@@ -109,12 +111,17 @@ family = {family}
 # Size in points ({FONT_SIZE_MIN:.0}–{FONT_SIZE_MAX:.0}).
 size = {size}
 
+[appearance]
+# App and terminal colors: tokyo-night, catppuccin-mocha, gruvbox-dark, one-dark, nord, solarized-light.
+theme = {theme}
+
 [terminal]
 # Lines of scrollback kept above the viewport ({SCROLLBACK_MIN}–{SCROLLBACK_MAX}).
 scrollback_lines = {scrollback}
 # Cursor shape: block or bar.
 cursor = {cursor}
 ",
+            theme = toml_string(self.theme.as_str()),
             scrollback = self.scrollback_lines,
             cursor = toml_string(self.cursor_shape.as_str()),
         )
@@ -135,6 +142,9 @@ struct FileConfig {
     font: FontSection,
     #[serde(default)]
     terminal: TerminalSection,
+    #[serde(default)]
+    appearance: AppearanceSection,
+    theme: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -147,6 +157,11 @@ struct FontSection {
 struct TerminalSection {
     scrollback_lines: Option<u32>,
     cursor: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct AppearanceSection {
+    theme: Option<String>,
 }
 
 pub struct AppSettings {
@@ -280,6 +295,13 @@ pub fn parse(text: &str) -> Result<Config, String> {
             .cursor
             .as_deref()
             .and_then(CursorShape::parse)
+            .unwrap_or_default(),
+        theme: file
+            .appearance
+            .theme
+            .as_deref()
+            .or(file.theme.as_deref())
+            .and_then(theme::AppTheme::parse)
             .unwrap_or_default(),
     };
     config.sanitize();
@@ -568,6 +590,8 @@ mod tests {
             [terminal]
             scrollback_lines = 8000
             cursor = "bar"
+            [appearance]
+            theme = "nord"
             "#,
         )
         .unwrap();
@@ -575,6 +599,7 @@ mod tests {
         assert_eq!(config.font_size, 16.0);
         assert_eq!(config.scrollback_lines, 8000);
         assert_eq!(config.cursor_shape, CursorShape::Bar);
+        assert_eq!(config.theme, theme::AppTheme::Nord);
     }
 
     #[test]
@@ -610,12 +635,14 @@ mod tests {
             font_size: 15.0,
             scrollback_lines: 4000,
             cursor_shape: CursorShape::Bar,
+            theme: theme::AppTheme::CatppuccinMocha,
         };
         let again = parse(&original.render()).unwrap();
         assert_eq!(again.resolved_font_family(), "SF Mono");
         assert_eq!(again.font_size, 15.0);
         assert_eq!(again.scrollback_lines, 4000);
         assert_eq!(again.cursor_shape, CursorShape::Bar);
+        assert_eq!(again.theme, theme::AppTheme::CatppuccinMocha);
     }
 
     #[test]
@@ -664,5 +691,19 @@ mod tests {
         assert_eq!(parse("[terminal]\ncursor = \"I-Beam\"\n").unwrap().cursor_shape, CursorShape::Bar);
         assert_eq!(parse("[terminal]\ncursor = \"block\"\n").unwrap().cursor_shape, CursorShape::Block);
         assert_eq!(parse("[terminal]\ncursor = \"squiggle\"\n").unwrap().cursor_shape, CursorShape::Bar);
+    }
+
+    #[test]
+    fn parse_theme_from_appearance_or_top_level() {
+        assert_eq!(
+            parse("[appearance]\ntheme = \"gruvbox-dark\"\n").unwrap().theme,
+            theme::AppTheme::GruvboxDark
+        );
+        assert_eq!(parse("theme = \"solarized-light\"\n").unwrap().theme, theme::AppTheme::SolarizedLight);
+        assert_eq!(
+            parse("theme = \"nord\"\n[appearance]\ntheme = \"one-dark\"\n").unwrap().theme,
+            theme::AppTheme::OneDark
+        );
+        assert_eq!(parse("[appearance]\ntheme = \"nope\"\n").unwrap().theme, theme::AppTheme::TokyoNight);
     }
 }
