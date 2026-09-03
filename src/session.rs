@@ -5,7 +5,7 @@ use std::{
 };
 
 use gpui::{
-    Bounds, ClipboardItem, Context, Corner, CursorStyle, EventEmitter, FocusHandle, InteractiveElement, IntoElement,
+    App, Bounds, ClipboardItem, Context, Corner, CursorStyle, EventEmitter, FocusHandle, InteractiveElement, IntoElement,
     KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
     Render, ScrollWheelEvent, Styled, Window, anchored, canvas, div, px, rgb,
 };
@@ -60,6 +60,7 @@ enum Command {
     Copy(flume::Sender<Option<String>>),
     Paste(String),
     ClearScreen,
+    SetScrollback(u32),
 }
 
 enum Event {
@@ -99,7 +100,7 @@ impl Session {
         let (event_tx, event_rx) = flume::unbounded();
         let (pty_tx, pty_rx) = flume::unbounded();
 
-        let cell = frame::measure_cell(window);
+        let cell = frame::measure_cell(window, cx);
         let cols = 80;
         let rows = 24;
         let pty = pty::spawn_shell(cols, rows, f32::from(cell.x) as u32, f32::from(cell.y) as u32, pty_tx)
@@ -119,7 +120,7 @@ impl Session {
             })
             .expect("failed to spawn pty forwarder");
 
-        start_emulator(pty, command_rx, event_tx, cols, rows, cell);
+        start_emulator(pty, command_rx, event_tx, cols, rows, cell, crate::config::scrollback_lines(cx));
 
         let focus = cx.focus_handle();
         focus.focus(window);
@@ -204,6 +205,14 @@ impl Session {
 
     pub fn clear_screen(&self) {
         let _ = self.commands.send(Command::ClearScreen);
+    }
+
+    pub fn apply_config(&mut self, cx: &mut Context<Self>) {
+        self.last_grid = (0, 0);
+        let _ = self
+            .commands
+            .send(Command::SetScrollback(crate::config::scrollback_lines(cx)));
+        cx.notify();
     }
 
     fn handle_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
@@ -378,9 +387,10 @@ impl Session {
     }
 
     fn handle_scroll(&mut self, event: &ScrollWheelEvent, cx: &mut Context<Self>) {
-        let delta = match event.delta.pixel_delta(px(theme::FONT_SIZE * theme::LINE_HEIGHT)) {
+        let line = crate::config::font_size(cx) * theme::LINE_HEIGHT;
+        let delta = match event.delta.pixel_delta(px(line)) {
             gpui::Point { y, .. } => {
-                let lines = (f32::from(y) / (theme::FONT_SIZE * theme::LINE_HEIGHT)).round() as isize;
+                let lines = (f32::from(y) / line).round() as isize;
                 -lines
             }
         };
@@ -390,8 +400,8 @@ impl Session {
         }
     }
 
-    fn sync_size(&mut self, bounds: Bounds<Pixels>, window: &mut Window) {
-        let cell = frame::measure_cell(window);
+    fn sync_size(&mut self, bounds: Bounds<Pixels>, window: &mut Window, cx: &App) {
+        let cell = frame::measure_cell(window, cx);
         self.cell_size = cell;
         self.content_bounds = Some(bounds);
         let pad = f32::from(theme::TERMINAL_PAD) * 2.0;
@@ -451,17 +461,17 @@ impl Render for Session {
                     {
                         let entity = entity.clone();
                         move |bounds, window, cx| {
-                            entity.update(cx, |this, _cx| this.sync_size(bounds, window));
+                            entity.update(cx, |this, cx| this.sync_size(bounds, window, cx));
                         }
                     },
                     move |bounds, _, window, cx| {
-                        let cell = frame::measure_cell(window);
+                        let cell = frame::measure_cell(window, cx);
                         frame::paint(
                             &frame,
                             bounds,
                             cell,
-                            &frame::terminal_font(),
-                            px(theme::FONT_SIZE),
+                            &frame::terminal_font(cx),
+                            px(crate::config::font_size(cx)),
                             hovered.as_ref(),
                             window,
                             cx,
@@ -543,10 +553,13 @@ fn link_menu_item(
 }
 
 fn reserved_shortcut(modifiers: &gpui::Modifiers, key: &str) -> bool {
-    if modifiers.platform && matches!(key, "q" | "t" | "w" | "n" | "c" | "v" | "k") {
+    if modifiers.platform && matches!(key, "q" | "t" | "w" | "n" | "c" | "v" | "k" | ",") {
         return true;
     }
-    modifiers.control && modifiers.shift && matches!(key, "t" | "w" | "c" | "v")
+    if modifiers.control && modifiers.shift && matches!(key, "t" | "w" | "c" | "v") {
+        return true;
+    }
+    modifiers.control && matches!(key, ",")
 }
 
 fn empty_frame() -> Frame {
@@ -565,11 +578,12 @@ fn start_emulator(
     cols: u16,
     rows: u16,
     cell: gpui::Point<Pixels>,
+    scrollback_lines: u32,
 ) {
     thread::Builder::new()
         .name("libghostty".into())
         .spawn(move || {
-            if let Err(error) = run_emulator(pty, commands, events, cols, rows, cell) {
+            if let Err(error) = run_emulator(pty, commands, events, cols, rows, cell, scrollback_lines) {
                 eprintln!("terminal thread exited: {error}");
             }
         })
@@ -583,6 +597,7 @@ fn run_emulator(
     cols: u16,
     rows: u16,
     cell: gpui::Point<Pixels>,
+    scrollback_lines: u32,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let grid = Arc::new(Mutex::new(SizeReportSize {
         rows,
@@ -592,7 +607,7 @@ fn run_emulator(
     }));
 
     let mut terminal = Terminal::new(cols, rows)?;
-    terminal.set_scrollback_max_lines(Some(2000))?;
+    terminal.set_scrollback_max_lines(Some(scrollback_lines as usize))?;
     terminal.resize(cols, rows, f32::from(cell.x) as u32, f32::from(cell.y) as u32)?;
 
     let writer = pty.writer.clone();
@@ -712,6 +727,9 @@ fn run_emulator(
                 // display. Form feed asks the shell (or vim) to redraw.
                 terminal.vt_write(b"\x1b[3J\x1b[H\x1b[2J");
                 pty::write_pty(&pty.writer, b"\x0c");
+            }
+            Command::SetScrollback(lines) => {
+                terminal.set_scrollback_max_lines(Some(lines as usize))?;
             }
         }
 

@@ -19,3 +19,5 @@ flume = "0.11"
 gpui = "0.2.2"
 libghostty-vt = { git = "https://github.com/uzaaft/libghostty-rs" }
 portable-pty = "0.9"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"

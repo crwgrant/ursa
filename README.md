@@ -13,6 +13,7 @@ A terminal emulator built in Rust with [GPUI](https://github.com/zed-industries/
 - Right-click a URL, URI, or path for **Copy**, **Paste**, and **Open Link** (or **Open Folder**)
 - In-app toasts for copy and paste feedback (bottom-right, click or wait to dismiss)
 - **⌘K** clears the screen and scrollback; the shell redraws the prompt at the top
+- Settings window (**⌘,** or **Ghostterm → Settings**) for font family, size, cursor style, and scrollback; values are stored in a Ghostterm-owned config file you can also edit by hand
 - New window with **⌘N** or **File → New Window**; closing the last tab leaves the app running so a Dock click (or ⌘N) can open another
 - Typing `exit` in the top-level shell closes that tab; the last tab closes the window without quitting the app
 
@@ -50,8 +51,31 @@ The window title is **Ghostterm**. On macOS, `$SHELL` is used when present (othe
 | Copy selection | ⌘C |
 | Paste | ⌘V or right-click a URL/path → Paste |
 | Clear screen | ⌘K |
+| Settings | ⌘, |
 
-On Windows, use **Ctrl+Shift** in place of **⌘** (for example **Ctrl+Shift+T** for a new tab, **Ctrl+Shift+C** / **Ctrl+Shift+V** to copy and paste). **Ctrl+C** still goes to the shell.
+On Windows, use **Ctrl+Shift** in place of **⌘** (for example **Ctrl+Shift+T** for a new tab, **Ctrl+Shift+C** / **Ctrl+Shift+V** to copy and paste). **Ctrl+C** still goes to the shell. Settings is **Ctrl+,**.
+
+## Configuration
+
+Ghostterm reads a TOML file it owns (not libghostty). The file is created the first time you save from **Settings** or click **Open File**.
+
+| Platform | Path |
+| --- | --- |
+| macOS | `~/Library/Application Support/Ghostterm/config.toml` |
+| Windows | `%APPDATA%\Ghostterm\config.toml` |
+| Linux | `$XDG_CONFIG_HOME/ghostterm/config.toml` or `~/.config/ghostterm/config.toml` |
+
+```toml
+[font]
+family = "Menlo"
+size = 13
+
+[terminal]
+scrollback_lines = 2000
+cursor = "bar" # or "block"
+```
+
+The Settings window writes this file when you change a value. Editing the file by hand reloads within a couple of seconds (or immediately via **Reload**). Invalid TOML keeps the last good settings and shows a toast; a missing file uses the platform defaults. Unknown keys are ignored so older Ghostterm versions stay compatible.
 
 ## Roadmap
 
@@ -87,9 +111,9 @@ On Windows, use **Ctrl+Shift** in place of **⌘** (for example **Ctrl+Shift+T**
 
 ### Config
 
-- [ ] Settings UI and config file owned by Ghostterm (not libghostty): a basic menu or window plus a user-editable file for common options as we add them
-- [ ] Font family and size, colors, and scrollback length
-- [ ] Config file for theme
+- [x] Settings UI and config file owned by Ghostterm (not libghostty): a basic menu or window plus a user-editable file for common options as we add them
+- [x] Font family, size, cursor style, and scrollback length
+- [ ] Colors / theme in the config file
 - [ ] Input and click behavior (including ⌘-click file vs folder)
 
 ### Later
@@ -103,14 +127,14 @@ On Windows, use **Ctrl+Shift** in place of **⌘** (for example **Ctrl+Shift+T**
 
 ## Test suite
 
-Not implemented yet. When we add one, start with unit tests around pure logic, then a few integration checks that do not need to launch the full GPUI window.
+Config parse/round-trip tests live in `src/config.rs` (`cargo test`). A broader suite is still to come: more unit tests around pure logic, then a few integration checks that do not need to launch the full GPUI window.
 
 ### Input
 
 - Shift-produced characters (`:@#!` and the rest of the punctuation set) encode to the PTY
 - ⌘← / ⌘→ send beginning/end of line; ⌥← / ⌥→ send word jumps
 - ⌥⌫ / ⌥⌦ send word-kill; ⌘⌫ / ⌘⌦ send kill to start/end of line
-- Reserved shortcuts (⌘Q / ⌘T / ⌘W) are not forwarded as terminal keys
+- Reserved shortcuts (⌘Q / ⌘T / ⌘W / ⌘,) are not forwarded as terminal keys
 
 ### Links and paths
 

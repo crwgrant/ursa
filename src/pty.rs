@@ -1,9 +1,12 @@
 use std::{
     io::{Read, Write},
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{Arc, Mutex},
     thread,
 };
+
+#[cfg(windows)]
+use std::path::Path;
 
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 
@@ -84,6 +87,7 @@ impl ShellLaunch {
         }
     }
 
+    #[cfg(windows)]
     fn with_args(mut self, args: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.args.extend(args.into_iter().map(Into::into));
         self
