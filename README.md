@@ -11,6 +11,7 @@ A macOS terminal emulator built in Rust with [GPUI](https://github.com/zed-indus
 - **⌘-click** `http(s)` URLs to open them in the browser (hold **⌘** to highlight the link first)
 - **⌘-click** filesystem paths to open Finder at that folder (a file path opens the parent directory)
 - Right-click a URL, URI, or path for **Copy**, **Paste**, and **Open Link** (or **Open Folder**)
+- In-app toasts for copy and paste feedback (bottom-right, click or wait to dismiss)
 - New window with **⌘N** or **File → New Window**; closing the last tab leaves the app running so a Dock click (or ⌘N) can open another
 - Typing `exit` in the top-level shell closes that tab; the last tab closes the window without quitting the app
 
@@ -54,8 +55,7 @@ The window title is **Ghostterm**. Your `$SHELL` is used when present (otherwise
 
 - [x] Copy and paste (⌘C / ⌘V)
 - [x] Delete by word and line (⌥⌫ / ⌘⌫ / ⌥⌦ / ⌘⌦)
-- [ ] IME / composed input (accents, CJK, dead keys)
-- [ ] Bell (audible or visual) and richer tab titles from the process
+- [x] Bell (audible or visual) and richer tab titles from the process
 - [ ] Clear screen (⌘K)
 
 ### Selection and clipboard
@@ -90,6 +90,7 @@ The window title is **Ghostterm**. Your `$SHELL` is used when present (otherwise
 
 ### Later
 
+- [ ] IME / composed input (accents, CJK, dead keys)
 - [ ] Find in scrollback (⌘F)
 - [ ] Split panes
 - [ ] OSC 7 working directory / remote-aware paths

@@ -174,14 +174,16 @@ impl Session {
             return;
         }
         cx.spawn(async move |this, cx| {
-            let Ok(Some(text)) = rx.recv_async().await else {
-                return;
+            let text = match rx.recv_async().await {
+                Ok(Some(text)) if !text.is_empty() => text,
+                _ => {
+                    let _ = this.update(cx, |_, cx| crate::notify::show(cx, "Nothing to copy"));
+                    return;
+                }
             };
-            if text.is_empty() {
-                return;
-            }
             let _ = this.update(cx, |_, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(text));
+                crate::notify::show(cx, "Copied");
             });
         })
         .detach();
@@ -189,9 +191,11 @@ impl Session {
 
     pub fn paste_clipboard(&self, cx: &mut Context<Self>) {
         let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
+            crate::notify::show(cx, "Clipboard is empty");
             return;
         };
         if text.is_empty() {
+            crate::notify::show(cx, "Clipboard is empty");
             return;
         }
         let _ = self.commands.send(Command::Paste(text));
@@ -312,8 +316,11 @@ impl Session {
             return;
         };
         let text = menu.hit.action.clipboard_text();
-        if !text.is_empty() {
+        if text.is_empty() {
+            crate::notify::show(cx, "Nothing to copy");
+        } else {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
+            crate::notify::show(cx, "Copied");
         }
         self.hovered_link = self.current_link_hit();
         cx.notify();
