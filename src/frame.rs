@@ -835,9 +835,9 @@ fn paint_span_text(
     }
 }
 
-pub fn terminal_font() -> Font {
+pub fn terminal_font(cx: &gpui::App) -> Font {
     Font {
-        family: SharedString::from(theme::FONT_FAMILY),
+        family: crate::config::font_family(cx),
         features: Default::default(),
         fallbacks: terminal_font_fallbacks(),
         weight: FontWeight::NORMAL,
@@ -856,9 +856,9 @@ fn terminal_font_fallbacks() -> Option<FontFallbacks> {
     }
 }
 
-pub fn measure_cell(window: &mut Window) -> Point<Pixels> {
-    let font = terminal_font();
-    let font_size = px(theme::FONT_SIZE);
+pub fn measure_cell(window: &mut Window, cx: &gpui::App) -> Point<Pixels> {
+    let font = terminal_font(cx);
+    let font_size = px(crate::config::font_size(cx));
     // Average a run of identical glyphs so rounding in the shaper does not
     // inflate a single "M" into a too-wide cell.
     const SAMPLE: &str = "MMMMMMMM";
@@ -876,5 +876,5 @@ pub fn measure_cell(window: &mut Window) -> Point<Pixels> {
         None,
     );
     let width = (line.width / SAMPLE.len() as f32).max(px(1.0));
-    point(width, px(theme::FONT_SIZE * theme::LINE_HEIGHT))
+    point(width, px(crate::config::font_size(cx) * theme::LINE_HEIGHT))
 }

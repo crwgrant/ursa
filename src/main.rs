@@ -1,10 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod config;
 mod frame;
 mod input;
 mod notify;
 mod pty;
 mod session;
+mod settings;
 mod theme;
 
 use gpui::{
@@ -13,9 +15,9 @@ use gpui::{
 };
 use session::{Session, SessionEvent};
 
-actions!(ghostterm, [Quit, NewWindow, NewTab, CloseTab, Copy, Paste, ClearScreen]);
+actions!(ghostterm, [Quit, NewWindow, NewTab, CloseTab, Copy, Paste, ClearScreen, OpenSettings]);
 
-const APP_ID: &str = "com.crwgrant.ghostterm";
+pub(crate) const APP_ID: &str = "com.crwgrant.ghostterm";
 const WINDOW_WIDTH: f32 = 1100.0;
 const WINDOW_HEIGHT: f32 = 720.0;
 const NEW_WINDOW_OFFSET: f32 = 28.0;
@@ -34,6 +36,11 @@ impl Workspace {
         };
         workspace.subscribe_session(0, window, cx);
         cx.observe_global::<notify::Notifications>(|_, cx| cx.notify()).detach();
+        cx.observe_global::<config::AppSettings>(|this, cx| {
+            this.apply_config(cx);
+            cx.notify();
+        })
+        .detach();
         workspace
     }
 
@@ -115,6 +122,12 @@ impl Workspace {
             tab.update(cx, |session, _cx| session.clear_screen());
         }
     }
+
+    fn apply_config(&self, cx: &mut Context<Self>) {
+        for tab in &self.tabs {
+            tab.update(cx, |session, cx| session.apply_config(cx));
+        }
+    }
 }
 
 impl Render for Workspace {
@@ -142,6 +155,7 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &Copy, _window, cx| this.copy_active(cx)))
             .on_action(cx.listener(|this, _: &Paste, _window, cx| this.paste_active(cx)))
             .on_action(cx.listener(|this, _: &ClearScreen, _window, cx| this.clear_active(cx)))
+            .on_action(|_: &OpenSettings, _window, cx| crate::settings::open(cx))
             .child(self.render_sidebar(&tabs, cx))
             .child(self.render_terminal())
             .child(notify::overlay(cx))
@@ -338,10 +352,12 @@ fn main() {
         }
     });
     app.run(|cx: &mut App| {
+        config::init(cx);
         cx.on_action(|_: &Quit, cx| cx.quit());
         cx.on_action(|_: &NewWindow, cx| {
             open_workspace_window(cx);
         });
+        cx.on_action(|_: &OpenSettings, cx| settings::open(cx));
         cx.bind_keys([
             KeyBinding::new("cmd-q", Quit, None),
             KeyBinding::new("cmd-n", NewWindow, None),
@@ -350,6 +366,8 @@ fn main() {
             KeyBinding::new("cmd-c", Copy, None),
             KeyBinding::new("cmd-v", Paste, None),
             KeyBinding::new("cmd-k", ClearScreen, None),
+            KeyBinding::new("cmd-,", OpenSettings, None),
+            KeyBinding::new("ctrl-,", OpenSettings, None),
             KeyBinding::new("ctrl-shift-t", NewTab, None),
             KeyBinding::new("ctrl-shift-w", CloseTab, None),
             KeyBinding::new("ctrl-shift-c", Copy, None),
@@ -358,7 +376,11 @@ fn main() {
         cx.set_menus(vec![
             Menu {
                 name: "Ghostterm".into(),
-                items: vec![MenuItem::separator(), MenuItem::action("Quit Ghostterm", Quit)],
+                items: vec![
+                    MenuItem::action("Settings…", OpenSettings),
+                    MenuItem::separator(),
+                    MenuItem::action("Quit Ghostterm", Quit),
+                ],
             },
             Menu {
                 name: "File".into(),
