@@ -263,7 +263,10 @@ fn paragraph_at(frame: &Frame, row: usize, col: u16) -> Option<(String, Vec<(usi
         let mut x = 0u16;
         for span in &frame.rows[r].spans {
             if span.text.is_empty() {
-                if r == row && col >= x && col < x.saturating_add(span.columns) && click_at.is_none()
+                if r == row
+                    && col >= x
+                    && col < x.saturating_add(span.columns)
+                    && click_at.is_none()
                 {
                     click_at = Some(text.len().saturating_sub(1));
                 }
@@ -280,11 +283,7 @@ fn paragraph_at(frame: &Frame, row: usize, col: u16) -> Option<(String, Vec<(usi
                 cells.push((r, cell_col));
                 local = local.saturating_add(1);
             }
-            if r == row
-                && click_at.is_none()
-                && col >= x
-                && col < x.saturating_add(span.columns)
-            {
+            if r == row && click_at.is_none() && col >= x && col < x.saturating_add(span.columns) {
                 click_at = Some(text.len().saturating_sub(1));
             }
             x = x.saturating_add(span.columns);
@@ -295,13 +294,7 @@ fn paragraph_at(frame: &Frame, row: usize, col: u16) -> Option<(String, Vec<(usi
     Some((text, cells, at))
 }
 
-fn osc8_hit(
-    frame: &Frame,
-    row: usize,
-    col: u16,
-    uri: &str,
-    action: LinkAction,
-) -> Option<LinkHit> {
+fn osc8_hit(frame: &Frame, row: usize, col: u16, uri: &str, action: LinkAction) -> Option<LinkHit> {
     let (start, end) = wrapped_range(&frame.rows, row);
     let mut cells = Vec::new();
     let mut found = false;
@@ -347,13 +340,7 @@ fn regex_hit(frame: &Frame, row: usize, col: u16) -> Option<LinkHit> {
         return hit_from_span(&text, &cells, start, end, LinkAction::OpenUrl(url));
     }
     if let Some((start, end, folder)) = find_path_at(&text, at) {
-        return hit_from_span(
-            &text,
-            &cells,
-            start,
-            end,
-            LinkAction::OpenFolder(folder),
-        );
+        return hit_from_span(&text, &cells, start, end, LinkAction::OpenFolder(folder));
     }
     None
 }
@@ -626,7 +613,10 @@ fn folder_from_raw(raw: &str) -> Option<PathBuf> {
         return Some(path);
     }
     if path.is_file() {
-        return path.parent().filter(|parent| parent.is_dir()).map(PathBuf::from);
+        return path
+            .parent()
+            .filter(|parent| parent.is_dir())
+            .map(PathBuf::from);
     }
     None
 }

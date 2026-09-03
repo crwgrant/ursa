@@ -5,17 +5,19 @@ use std::{
 };
 
 use gpui::{
-    canvas, div, px, rgb, Bounds, Context, CursorStyle, EventEmitter, FocusHandle,
+    canvas, div, px, rgb, Bounds, ClipboardItem, Context, CursorStyle, EventEmitter, FocusHandle,
     InteractiveElement, IntoElement, KeyDownEvent, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Render, ScrollWheelEvent,
     Styled, Window,
 };
 use libghostty_vt::{
-    key,
+    fmt::Format,
+    key, paste,
     render::{CellIterator, RenderState, RowIterator},
     selection::gesture::{DragEvent, Geometry, Gesture, PressEvent, ReleaseEvent},
+    selection::FormatOptions,
     terminal::{
-        ConformanceLevel, DeviceAttributeFeature, DeviceAttributes, DeviceType, Point,
+        ConformanceLevel, DeviceAttributeFeature, DeviceAttributes, DeviceType, Mode, Point,
         PointCoordinate, PrimaryDeviceAttributes, ScrollViewport, SecondaryDeviceAttributes,
         SizeReportSize,
     },
@@ -57,6 +59,8 @@ enum Command {
     },
     SelectRelease(SelectPointer),
     ClearSelection,
+    Copy(flume::Sender<Option<String>>),
+    Paste(String),
 }
 
 enum Event {
@@ -164,6 +168,35 @@ impl Session {
         self.focus.focus(window);
     }
 
+    pub fn copy_selection(&self, cx: &mut Context<Self>) {
+        let (tx, rx) = flume::bounded(1);
+        if self.commands.send(Command::Copy(tx)).is_err() {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            let Ok(Some(text)) = rx.recv_async().await else {
+                return;
+            };
+            if text.is_empty() {
+                return;
+            }
+            let _ = this.update(cx, |_, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+            });
+        })
+        .detach();
+    }
+
+    pub fn paste_clipboard(&self, cx: &mut Context<Self>) {
+        let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
+            return;
+        };
+        if text.is_empty() {
+            return;
+        }
+        let _ = self.commands.send(Command::Paste(text));
+    }
+
     fn handle_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
         if reserved_shortcut(&event.keystroke.modifiers, &event.keystroke.key) {
             return;
@@ -175,7 +208,12 @@ impl Session {
         }
     }
 
-    fn handle_mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn handle_mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.focus.focus(window);
         if event.button != MouseButton::Left {
             return;
@@ -215,13 +253,25 @@ impl Session {
         }
     }
 
-    fn handle_modifiers(&mut self, event: &ModifiersChangedEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn handle_modifiers(
+        &mut self,
+        event: &ModifiersChangedEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.update_link_hover(window.mouse_position(), event.modifiers.platform, cx);
     }
 
-    fn update_link_hover(&mut self, position: gpui::Point<Pixels>, cmd: bool, cx: &mut Context<Self>) {
+    fn update_link_hover(
+        &mut self,
+        position: gpui::Point<Pixels>,
+        cmd: bool,
+        cx: &mut Context<Self>,
+    ) {
         self.cmd_for_links = cmd;
-        self.hover_cell = self.pointer_at(position).map(|pointer| (pointer.row, pointer.col));
+        self.hover_cell = self
+            .pointer_at(position)
+            .map(|pointer| (pointer.row, pointer.col));
         let hit = self.current_link_hit();
         if hit != self.hovered_link {
             self.hovered_link = hit;
@@ -337,17 +387,19 @@ impl Render for Session {
                 CursorStyle::IBeam
             })
             .on_key_down(cx.listener(|this, event, _window, cx| this.handle_key(event, cx)))
-            .on_modifiers_changed(cx.listener(|this, event, window, cx| {
-                this.handle_modifiers(event, window, cx)
-            }))
+            .on_action(cx.listener(|this, _: &crate::Copy, _window, cx| this.copy_selection(cx)))
+            .on_action(cx.listener(|this, _: &crate::Paste, _window, cx| this.paste_clipboard(cx)))
+            .on_modifiers_changed(
+                cx.listener(|this, event, window, cx| this.handle_modifiers(event, window, cx)),
+            )
             .on_scroll_wheel(cx.listener(|this, event, _window, cx| this.handle_scroll(event, cx)))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, event, window, cx| this.handle_mouse_down(event, window, cx)),
             )
-            .on_mouse_move(cx.listener(|this, event, _window, cx| {
-                this.handle_mouse_move(event, cx)
-            }))
+            .on_mouse_move(
+                cx.listener(|this, event, _window, cx| this.handle_mouse_move(event, cx)),
+            )
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|this, event, _window, cx| this.handle_mouse_up(event, cx)),
@@ -380,7 +432,7 @@ impl Render for Session {
 }
 
 fn reserved_shortcut(modifiers: &gpui::Modifiers, key: &str) -> bool {
-    modifiers.platform && matches!(key, "q" | "t" | "w" | "n")
+    modifiers.platform && matches!(key, "q" | "t" | "w" | "n" | "c" | "v")
 }
 
 fn empty_frame() -> Frame {
@@ -554,6 +606,15 @@ fn run_emulator(
                 gesture.reset(&terminal);
                 let _ = terminal.set_selection(None);
             }
+            Command::Copy(reply) => {
+                let text = selection_text(&terminal);
+                let _ = reply.send(text);
+            }
+            Command::Paste(text) => {
+                gesture.reset(&terminal);
+                let _ = terminal.set_selection(None);
+                write_paste(&pty, &terminal, text);
+            }
         }
 
         if let Ok(title) = terminal.title() {
@@ -642,4 +703,45 @@ fn apply_select_release(
     let grid_ref = viewport_ref(terminal, pointer);
     release_event.apply(gesture, terminal, grid_ref)?;
     Ok(())
+}
+
+fn selection_text(terminal: &Terminal) -> Option<String> {
+    let options = FormatOptions::new()
+        .with_emit_format(Format::Plain)
+        .with_unwrap(true)
+        .with_trim(true);
+    let bytes = terminal.format_selection_alloc(None, options).ok()??;
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+fn write_paste(pty: &PtyIo, terminal: &Terminal, text: String) {
+    let bracketed = terminal.mode(Mode::BRACKETED_PASTE).unwrap_or(false);
+    let original = text.into_bytes();
+    let mut data = original.clone();
+    let mut buf = vec![0u8; data.len().saturating_add(32)];
+    loop {
+        match paste::encode(&mut data, bracketed, &mut buf) {
+            Ok(len) => {
+                pty::write_pty(&pty.writer, &buf[..len]);
+                break;
+            }
+            Err(libghostty_vt::Error::OutOfSpace { required }) if required > buf.len() => {
+                buf.resize(required, 0);
+                data.clone_from(&original);
+            }
+            Err(_) => {
+                let fallback: Vec<u8> = original
+                    .iter()
+                    .map(|&byte| if byte == b'\n' { b'\r' } else { byte })
+                    .collect();
+                pty::write_pty(&pty.writer, &fallback);
+                break;
+            }
+        }
+    }
 }
