@@ -733,16 +733,18 @@ pub fn paint(
             }
         }
 
-        // Draw the cursor under glyphs so the current cell stays readable
-        // and the block lines up with the same grid used for text.
-        if let Some(cursor) = frame.cursor.filter(|cursor| cursor.y as usize == row_idx) {
-            window.paint_quad(fill(
-                Bounds {
-                    origin: point(bounds.origin.x + theme::TERMINAL_PAD + cell.x * cursor.x as f32, y),
-                    size: size(cell.x, cell.y),
-                },
-                rgb(theme::CURSOR),
-            ));
+        // A block cursor is painted under glyphs so the current cell stays
+        // readable and lines up with the same grid used for text.
+        if crate::config::cursor_shape(cx) == crate::config::CursorShape::Block {
+            if let Some(cursor) = frame.cursor.filter(|cursor| cursor.y as usize == row_idx) {
+                window.paint_quad(fill(
+                    Bounds {
+                        origin: point(bounds.origin.x + theme::TERMINAL_PAD + cell.x * cursor.x as f32, y),
+                        size: size(cell.x, cell.y),
+                    },
+                    rgb(theme::CURSOR),
+                ));
+            }
         }
 
         x = bounds.origin.x + theme::TERMINAL_PAD;
@@ -751,6 +753,20 @@ pub fn paint(
             paint_span_text(span, col, x, y, cell, font, font_size, &highlights, link_color, underline, window, cx);
             x += cell.x * span.columns as f32;
             col = col.saturating_add(span.columns);
+        }
+
+        // A bar cursor sits on top of the glyph so it stays visible.
+        if crate::config::cursor_shape(cx) == crate::config::CursorShape::Bar {
+            if let Some(cursor) = frame.cursor.filter(|cursor| cursor.y as usize == row_idx) {
+                let width = (cell.x * 0.12).max(px(1.5));
+                window.paint_quad(fill(
+                    Bounds {
+                        origin: point(bounds.origin.x + theme::TERMINAL_PAD + cell.x * cursor.x as f32, y),
+                        size: size(width, cell.y),
+                    },
+                    rgb(theme::CURSOR),
+                ));
+            }
         }
 
         y += cell.y;

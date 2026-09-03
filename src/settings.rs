@@ -19,6 +19,7 @@ impl Global for SettingsUi {}
 enum MenuKind {
     FontFamily,
     FontSize,
+    Cursor,
 }
 
 pub struct SettingsPage {
@@ -72,6 +73,14 @@ impl SettingsPage {
     fn select_font_size(&mut self, size: f32, cx: &mut Context<Self>) {
         config::update(cx, |config| {
             config.font_size = size;
+        });
+        self.open_menu = None;
+        cx.notify();
+    }
+
+    fn select_cursor(&mut self, shape: config::CursorShape, cx: &mut Context<Self>) {
+        config::update(cx, |config| {
+            config.cursor_shape = shape;
         });
         self.open_menu = None;
         cx.notify();
@@ -137,6 +146,7 @@ impl Render for SettingsPage {
         let config = config::current(cx);
         let family = config.resolved_font_family();
         let font_size = config.font_size;
+        let cursor_shape = config.cursor_shape;
         let path = config::display_path(cx);
         let error = config::load_error(cx);
         let open_menu = self.open_menu;
@@ -170,6 +180,22 @@ impl Render for SettingsPage {
                     .collect();
                 dropdown_overlay("font-size-menu", position, items, cx).into_any_element()
             }
+            MenuKind::Cursor => {
+                let items: Vec<_> = config::CursorShape::all()
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, shape)| {
+                        dropdown_item(
+                            ("cursor-choice", index).into(),
+                            shape.label().to_string(),
+                            shape == cursor_shape,
+                            cx,
+                            move |this, cx| this.select_cursor(shape, cx),
+                        )
+                    })
+                    .collect();
+                dropdown_overlay("cursor-menu", position, items, cx).into_any_element()
+            }
         });
 
         div()
@@ -194,6 +220,7 @@ impl Render for SettingsPage {
                     .child(font_family_row(family.clone(), cx))
                     .child(font_size_row(font_size, cx))
                     .child(section_label("Terminal"))
+                    .child(cursor_row(cursor_shape, cx))
                     .child(scrollback_row(self.scrollback.clone()))
                     .child(section_label("Config file"))
                     .child(div().text_xs().text_color(rgb(theme::TEXT_DIM)).child(path))
@@ -235,7 +262,7 @@ impl Render for SettingsPage {
                     .border_color(rgb(theme::SIDEBAR_BORDER))
                     .text_xs()
                     .text_color(rgb(theme::TEXT_DIM))
-                    .child("Font changes apply immediately. Scrollback saves when the field loses focus."),
+                    .child("Font and cursor changes apply immediately. Scrollback saves when the field loses focus."),
             )
             .children(menu)
     }
@@ -247,6 +274,10 @@ fn font_family_row(family: String, cx: &mut Context<SettingsPage>) -> impl IntoE
 
 fn font_size_row(size: f32, cx: &mut Context<SettingsPage>) -> impl IntoElement {
     dropdown_row("font-size", "Size", format_font_size(size), MenuKind::FontSize, cx)
+}
+
+fn cursor_row(shape: config::CursorShape, cx: &mut Context<SettingsPage>) -> impl IntoElement {
+    dropdown_row("cursor-shape", "Cursor", shape.label().to_string(), MenuKind::Cursor, cx)
 }
 
 fn dropdown_row(

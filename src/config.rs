@@ -15,11 +15,47 @@ pub const FONT_SIZE_MAX: f32 = 48.0;
 pub const SCROLLBACK_MIN: u32 = 100;
 pub const SCROLLBACK_MAX: u32 = 100_000;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CursorShape {
+    Block,
+    #[default]
+    Bar,
+}
+
+impl CursorShape {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Block => "block",
+            Self::Bar => "bar",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Block => "Block",
+            Self::Bar => "Bar",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "block" => Some(Self::Block),
+            "bar" | "beam" | "i-beam" | "ibeam" => Some(Self::Bar),
+            _ => None,
+        }
+    }
+
+    pub fn all() -> [Self; 2] {
+        [Self::Block, Self::Bar]
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
     pub font_family: Option<String>,
     pub font_size: f32,
     pub scrollback_lines: u32,
+    pub cursor_shape: CursorShape,
 }
 
 impl Default for Config {
@@ -28,6 +64,7 @@ impl Default for Config {
             font_family: None,
             font_size: theme::FONT_SIZE,
             scrollback_lines: DEFAULT_SCROLLBACK,
+            cursor_shape: CursorShape::Bar,
         }
     }
 }
@@ -75,8 +112,11 @@ size = {size}
 [terminal]
 # Lines of scrollback kept above the viewport ({SCROLLBACK_MIN}–{SCROLLBACK_MAX}).
 scrollback_lines = {scrollback}
+# Cursor shape: block or bar.
+cursor = {cursor}
 ",
             scrollback = self.scrollback_lines,
+            cursor = toml_string(self.cursor_shape.as_str()),
         )
     }
 
@@ -106,6 +146,7 @@ struct FontSection {
 #[derive(Debug, Default, Deserialize)]
 struct TerminalSection {
     scrollback_lines: Option<u32>,
+    cursor: Option<String>,
 }
 
 pub struct AppSettings {
@@ -159,6 +200,10 @@ pub fn font_size(cx: &App) -> f32 {
 
 pub fn scrollback_lines(cx: &App) -> u32 {
     current(cx).scrollback_lines
+}
+
+pub fn cursor_shape(cx: &App) -> CursorShape {
+    current(cx).cursor_shape
 }
 
 pub fn path(cx: &App) -> PathBuf {
@@ -230,6 +275,12 @@ pub fn parse(text: &str) -> Result<Config, String> {
         font_family: file.font.family,
         font_size: file.font.size.unwrap_or(theme::FONT_SIZE),
         scrollback_lines: file.terminal.scrollback_lines.unwrap_or(DEFAULT_SCROLLBACK),
+        cursor_shape: file
+            .terminal
+            .cursor
+            .as_deref()
+            .and_then(CursorShape::parse)
+            .unwrap_or_default(),
     };
     config.sanitize();
     Ok(config)
@@ -516,12 +567,14 @@ mod tests {
             size = 16
             [terminal]
             scrollback_lines = 8000
+            cursor = "bar"
             "#,
         )
         .unwrap();
         assert_eq!(config.font_family.as_deref(), Some("JetBrains Mono"));
         assert_eq!(config.font_size, 16.0);
         assert_eq!(config.scrollback_lines, 8000);
+        assert_eq!(config.cursor_shape, CursorShape::Bar);
     }
 
     #[test]
@@ -556,11 +609,13 @@ mod tests {
             font_family: Some("SF Mono".into()),
             font_size: 15.0,
             scrollback_lines: 4000,
+            cursor_shape: CursorShape::Bar,
         };
         let again = parse(&original.render()).unwrap();
         assert_eq!(again.resolved_font_family(), "SF Mono");
         assert_eq!(again.font_size, 15.0);
         assert_eq!(again.scrollback_lines, 4000);
+        assert_eq!(again.cursor_shape, CursorShape::Bar);
     }
 
     #[test]
@@ -601,5 +656,13 @@ mod tests {
         assert_eq!(parse_scrollback(""), None);
         assert_eq!(parse_scrollback("abc"), None);
         assert_eq!(parse_scrollback("20.5"), None);
+    }
+
+    #[test]
+    fn parse_cursor_shape_aliases_and_fallback() {
+        assert_eq!(parse("[terminal]\ncursor = \"bar\"\n").unwrap().cursor_shape, CursorShape::Bar);
+        assert_eq!(parse("[terminal]\ncursor = \"I-Beam\"\n").unwrap().cursor_shape, CursorShape::Bar);
+        assert_eq!(parse("[terminal]\ncursor = \"block\"\n").unwrap().cursor_shape, CursorShape::Block);
+        assert_eq!(parse("[terminal]\ncursor = \"squiggle\"\n").unwrap().cursor_shape, CursorShape::Bar);
     }
 }
