@@ -5,9 +5,9 @@ use std::{
 };
 
 use gpui::{
-    Bounds, ClipboardItem, Context, CursorStyle, EventEmitter, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Render,
-    ScrollWheelEvent, Styled, Window, canvas, div, px, rgb,
+    Bounds, ClipboardItem, Context, Corner, CursorStyle, EventEmitter, FocusHandle, InteractiveElement, IntoElement,
+    KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
+    Render, ScrollWheelEvent, Styled, Window, anchored, canvas, div, px, rgb,
 };
 use libghostty_vt::{
     Terminal,
@@ -83,6 +83,13 @@ pub struct Session {
     cmd_for_links: bool,
     hover_cell: Option<(u32, u16)>,
     hovered_link: Option<LinkHit>,
+    link_menu: Option<LinkMenu>,
+}
+
+#[derive(Clone, Debug)]
+struct LinkMenu {
+    position: gpui::Point<Pixels>,
+    hit: LinkHit,
 }
 
 impl Session {
@@ -153,6 +160,7 @@ impl Session {
             cmd_for_links: false,
             hover_cell: None,
             hovered_link: None,
+            link_menu: None,
         }
     }
 
@@ -190,6 +198,10 @@ impl Session {
     }
 
     fn handle_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        if event.keystroke.key == "escape" && self.dismiss_link_menu(cx) {
+            cx.stop_propagation();
+            return;
+        }
         if reserved_shortcut(&event.keystroke.modifiers, &event.keystroke.key) {
             return;
         }
@@ -205,15 +217,13 @@ impl Session {
         if event.button != MouseButton::Left {
             return;
         }
+        self.dismiss_link_menu(cx);
         if event.modifiers.platform {
             if let Some(hit) = self
                 .pointer_at(event.position)
                 .and_then(|pointer| self.frame.link_at(pointer.row, pointer.col))
             {
-                match hit.action {
-                    LinkAction::OpenUrl(url) => cx.open_url(&url),
-                    LinkAction::OpenFolder(path) => cx.open_with_system(&path),
-                }
+                hit.action.open(cx);
                 cx.stop_propagation();
                 return;
             }
@@ -259,10 +269,68 @@ impl Session {
     }
 
     fn current_link_hit(&self) -> Option<LinkHit> {
+        if let Some(menu) = &self.link_menu {
+            return Some(menu.hit.clone());
+        }
         if !self.cmd_for_links {
             return None;
         }
         self.hover_cell.and_then(|(row, col)| self.frame.link_at(row, col))
+    }
+
+    fn handle_right_click(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.focus.focus(window);
+        if let Some(hit) = self
+            .pointer_at(event.position)
+            .and_then(|pointer| self.frame.link_at(pointer.row, pointer.col))
+        {
+            self.link_menu = Some(LinkMenu {
+                position: event.position,
+                hit: hit.clone(),
+            });
+            self.hovered_link = Some(hit);
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
+        if self.dismiss_link_menu(cx) {
+            cx.stop_propagation();
+        }
+    }
+
+    fn dismiss_link_menu(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.link_menu.take().is_none() {
+            return false;
+        }
+        self.hovered_link = self.current_link_hit();
+        cx.notify();
+        true
+    }
+
+    fn copy_link(&mut self, cx: &mut Context<Self>) {
+        let Some(menu) = self.link_menu.take() else {
+            return;
+        };
+        let text = menu.hit.action.clipboard_text();
+        if !text.is_empty() {
+            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        }
+        self.hovered_link = self.current_link_hit();
+        cx.notify();
+    }
+
+    fn paste_from_menu(&mut self, cx: &mut Context<Self>) {
+        self.dismiss_link_menu(cx);
+        self.paste_clipboard(cx);
+    }
+
+    fn open_from_menu(&mut self, cx: &mut Context<Self>) {
+        let Some(menu) = self.link_menu.take() else {
+            return;
+        };
+        menu.hit.action.open(cx);
+        self.hovered_link = self.current_link_hit();
+        cx.notify();
     }
 
     fn handle_mouse_up(&mut self, event: &MouseUpEvent, cx: &mut Context<Self>) {
@@ -335,11 +403,13 @@ impl Render for Session {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let frame = self.frame.clone();
         let hovered = self.hovered_link.clone();
+        let link_menu = self.link_menu.clone();
         let entity = cx.entity();
 
         div()
             .id("terminal")
             .track_focus(&self.focus)
+            .relative()
             .size_full()
             .bg(rgb(theme::WINDOW))
             .overflow_hidden()
@@ -356,6 +426,10 @@ impl Render for Session {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, event, window, cx| this.handle_mouse_down(event, window, cx)),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, event, window, cx| this.handle_right_click(event, window, cx)),
             )
             .on_mouse_move(cx.listener(|this, event, _window, cx| this.handle_mouse_move(event, cx)))
             .on_mouse_up(MouseButton::Left, cx.listener(|this, event, _window, cx| this.handle_mouse_up(event, cx)))
@@ -383,7 +457,76 @@ impl Render for Session {
                 )
                 .size_full(),
             )
+            .children(link_menu.map(|menu| link_context_menu(menu, cx)))
     }
+}
+
+fn link_context_menu(menu: LinkMenu, cx: &mut Context<Session>) -> impl IntoElement {
+    let open_label = match menu.hit.action {
+        LinkAction::OpenUrl(_) => "Open Link",
+        LinkAction::OpenFolder(_) => "Open Folder",
+    };
+
+    div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .occlude()
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, _event, _window, cx| {
+                this.dismiss_link_menu(cx);
+                cx.stop_propagation();
+            }),
+        )
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(|this, event, window, cx| this.handle_right_click(event, window, cx)),
+        )
+        .child(
+            anchored().position(menu.position).anchor(Corner::TopLeft).child(
+                div()
+                    .occlude()
+                    .min_w(px(148.0))
+                    .py_1()
+                    .rounded_md()
+                    .bg(rgb(theme::TOOLTIP))
+                    .border_1()
+                    .border_color(rgb(theme::SIDEBAR_BORDER))
+                    .shadow_md()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+                    .child(link_menu_item("link-menu-copy", "Copy", cx, |this, cx| this.copy_link(cx)))
+                    .child(link_menu_item("link-menu-paste", "Paste", cx, |this, cx| this.paste_from_menu(cx)))
+                    .child(link_menu_item("link-menu-open", open_label, cx, |this, cx| this.open_from_menu(cx))),
+            ),
+        )
+}
+
+fn link_menu_item(
+    id: &'static str,
+    label: &'static str,
+    cx: &mut Context<Session>,
+    on_click: impl Fn(&mut Session, &mut Context<Session>) + 'static,
+) -> impl IntoElement {
+    div()
+        .id(id)
+        .w_full()
+        .px_3()
+        .py_1()
+        .text_sm()
+        .text_color(rgb(theme::TEXT))
+        .cursor_pointer()
+        .hover(|style| style.bg(rgb(theme::TAB_HOVER)))
+        .child(label)
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _event, _window, cx| {
+                cx.stop_propagation();
+                on_click(this, cx);
+            }),
+        )
 }
 
 fn reserved_shortcut(modifiers: &gpui::Modifiers, key: &str) -> bool {
