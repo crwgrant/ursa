@@ -38,12 +38,14 @@ The window title is **Ghostterm**. Your `$SHELL` is used when present (otherwise
 | Start / end of line | ⌘← / ⌘→ |
 | Previous / next word | ⌥← / ⌥→ |
 | Open URL or folder | ⌘-click |
+| Copy selection | ⌘C |
+| Paste | ⌘V |
 
 ## Roadmap
 
 ### Daily driver
 
-- [ ] Copy and paste (⌘C / ⌘V)
+- [x] Copy and paste (⌘C / ⌘V)
 - [ ] Delete by word and line (⌥⌫ / ⌘⌫, maybe ⌥⌦)
 - [ ] IME / composed input (accents, CJK, dead keys)
 - [ ] Bell (audible or visual) and richer tab titles from the process
@@ -51,7 +53,7 @@ The window title is **Ghostterm**. Your `$SHELL` is used when present (otherwise
 
 ### Selection and clipboard
 
-- [ ] Copy the current selection with ⌘C
+- [x] Copy the current selection with ⌘C
 - [ ] Right-click menu: Copy, Paste, Open Link
 - [ ] Select all in scrollback (⌘A)
 - [ ] Optional copy-on-select

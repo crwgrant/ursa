@@ -5,12 +5,12 @@ mod session;
 mod theme;
 
 use gpui::{
-    actions, div, prelude::*, px, rgb, size, AnyView, App, Application, Bounds, Context, KeyBinding,
-    MouseButton, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
+    actions, div, prelude::*, px, rgb, size, AnyView, App, Application, Bounds, Context,
+    KeyBinding, MouseButton, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
 use session::{Session, SessionEvent};
 
-actions!(ghostterm, [Quit, NewTab, CloseTab]);
+actions!(ghostterm, [Quit, NewTab, CloseTab, Copy, Paste]);
 
 struct Workspace {
     tabs: Vec<gpui::Entity<Session>>,
@@ -92,6 +92,18 @@ impl Workspace {
             tab.update(cx, |session, _cx| session.focus(window));
         }
     }
+
+    fn copy_active(&self, cx: &mut Context<Self>) {
+        if let Some(tab) = self.tabs.get(self.active) {
+            tab.update(cx, |session, cx| session.copy_selection(cx));
+        }
+    }
+
+    fn paste_active(&self, cx: &mut Context<Self>) {
+        if let Some(tab) = self.tabs.get(self.active) {
+            tab.update(cx, |session, cx| session.paste_clipboard(cx));
+        }
+    }
 }
 
 impl Render for Workspace {
@@ -114,9 +126,11 @@ impl Render for Workspace {
             .text_color(rgb(theme::TEXT))
             .font_family("Menlo")
             .on_action(cx.listener(|this, _: &NewTab, window, cx| this.add_tab(window, cx)))
-            .on_action(cx.listener(|this, _: &CloseTab, window, cx| {
-                this.close_active_tab(window, cx)
-            }))
+            .on_action(
+                cx.listener(|this, _: &CloseTab, window, cx| this.close_active_tab(window, cx)),
+            )
+            .on_action(cx.listener(|this, _: &Copy, _window, cx| this.copy_active(cx)))
+            .on_action(cx.listener(|this, _: &Paste, _window, cx| this.paste_active(cx)))
             .child(self.render_sidebar(&tabs, cx))
             .child(self.render_terminal())
     }
@@ -316,11 +330,7 @@ impl Render for ActionTooltip {
             .border_color(rgb(theme::SIDEBAR_BORDER))
             .shadow_md()
             .text_xs()
-            .child(
-                div()
-                    .text_color(rgb(theme::TEXT))
-                    .child(self.label.clone()),
-            )
+            .child(div().text_color(rgb(theme::TEXT)).child(self.label.clone()))
             .child(
                 div()
                     .text_color(rgb(theme::TEXT_DIM))
@@ -338,6 +348,8 @@ fn main() {
             KeyBinding::new("cmd-q", Quit, None),
             KeyBinding::new("cmd-t", NewTab, None),
             KeyBinding::new("cmd-w", CloseTab, None),
+            KeyBinding::new("cmd-c", Copy, None),
+            KeyBinding::new("cmd-v", Paste, None),
         ]);
 
         cx.open_window(
