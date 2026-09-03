@@ -74,14 +74,10 @@ fn macos_line_editing(keystroke: &Keystroke) -> Option<EncodedKey> {
 }
 
 fn printable_text(keystroke: &Keystroke) -> Option<String> {
-    let text = keystroke
-        .key_char
-        .as_deref()
-        .filter(|text| !text.is_empty())
-        .or_else(|| {
-            let key = keystroke.key.as_str();
-            (key.chars().count() == 1).then_some(key)
-        })?;
+    let text = keystroke.key_char.as_deref().filter(|text| !text.is_empty()).or_else(|| {
+        let key = keystroke.key.as_str();
+        (key.chars().count() == 1).then_some(key)
+    })?;
 
     if text
         .chars()

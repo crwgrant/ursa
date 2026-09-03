@@ -1,15 +1,15 @@
 use std::path::PathBuf;
 
 use gpui::{
-    fill, point, px, rgb, size, Bounds, Font, FontStyle, FontWeight, Hsla, Pixels, Point,
-    SharedString, TextRun, UnderlineStyle, Window,
+    Bounds, Font, FontStyle, FontWeight, Hsla, Pixels, Point, SharedString, TextRun, UnderlineStyle, Window, fill, point, px,
+    rgb, size,
 };
 use libghostty_vt::{
+    Terminal,
     error::Error,
     render::{CellIterator, RenderState, RowIterator},
     style::RgbColor,
     terminal::{Point as TermPoint, PointCoordinate},
-    Terminal,
 };
 
 use crate::theme;
@@ -156,12 +156,7 @@ pub fn capture<'alloc>(
             };
 
             match current.as_mut() {
-                Some(span)
-                    if span.fg == next.fg
-                        && span.bg == next.bg
-                        && span.bold == next.bold
-                        && span.link == next.link =>
-                {
+                Some(span) if span.fg == next.fg && span.bg == next.bg && span.bold == next.bold && span.link == next.link => {
                     span.text.push_str(&next.text);
                     span.columns += 1;
                 }
@@ -180,9 +175,7 @@ pub fn capture<'alloc>(
     }
 
     let cursor = if snapshot.cursor_visible()? {
-        snapshot
-            .cursor_viewport()?
-            .map(|vp| CursorCell { x: vp.x, y: vp.y })
+        snapshot.cursor_viewport()?.map(|vp| CursorCell { x: vp.x, y: vp.y })
     } else {
         None
     };
@@ -263,11 +256,7 @@ fn paragraph_at(frame: &Frame, row: usize, col: u16) -> Option<(String, Vec<(usi
         let mut x = 0u16;
         for span in &frame.rows[r].spans {
             if span.text.is_empty() {
-                if r == row
-                    && col >= x
-                    && col < x.saturating_add(span.columns)
-                    && click_at.is_none()
-                {
+                if r == row && col >= x && col < x.saturating_add(span.columns) && click_at.is_none() {
                     click_at = Some(text.len().saturating_sub(1));
                 }
                 x = x.saturating_add(span.columns);
@@ -345,13 +334,7 @@ fn regex_hit(frame: &Frame, row: usize, col: u16) -> Option<LinkHit> {
     None
 }
 
-fn hit_from_span(
-    text: &str,
-    cells: &[(usize, u16)],
-    start: usize,
-    end: usize,
-    action: LinkAction,
-) -> Option<LinkHit> {
+fn hit_from_span(text: &str, cells: &[(usize, u16)], start: usize, end: usize, action: LinkAction) -> Option<LinkHit> {
     let start_char = text[..start].chars().count();
     let end_char = text[..end].chars().count();
     if start_char >= cells.len() {
@@ -569,10 +552,7 @@ fn trim_path_span(span: &str) -> &str {
     loop {
         if trimmed.len() > 1 {
             let last = trimmed.as_bytes()[trimmed.len() - 1];
-            if matches!(
-                last,
-                b'.' | b',' | b';' | b'!' | b'?' | b')' | b']' | b'\'' | b'"'
-            ) {
+            if matches!(last, b'.' | b',' | b';' | b'!' | b'?' | b')' | b']' | b'\'' | b'"') {
                 trimmed = &trimmed[..trimmed.len() - 1];
                 continue;
             }
@@ -613,10 +593,7 @@ fn folder_from_raw(raw: &str) -> Option<PathBuf> {
         return Some(path);
     }
     if path.is_file() {
-        return path
-            .parent()
-            .filter(|parent| parent.is_dir())
-            .map(PathBuf::from);
+        return path.parent().filter(|parent| parent.is_dir()).map(PathBuf::from);
     }
     None
 }
@@ -723,10 +700,7 @@ pub fn paint(
             if width > px(0.0) {
                 window.paint_quad(fill(
                     Bounds {
-                        origin: point(
-                            bounds.origin.x + theme::TERMINAL_PAD + cell.x * start_col as f32,
-                            y,
-                        ),
+                        origin: point(bounds.origin.x + theme::TERMINAL_PAD + cell.x * start_col as f32, y),
                         size: size(width, cell.y),
                     },
                     wash,
@@ -739,10 +713,7 @@ pub fn paint(
         if let Some(cursor) = frame.cursor.filter(|cursor| cursor.y as usize == row_idx) {
             window.paint_quad(fill(
                 Bounds {
-                    origin: point(
-                        bounds.origin.x + theme::TERMINAL_PAD + cell.x * cursor.x as f32,
-                        y,
-                    ),
+                    origin: point(bounds.origin.x + theme::TERMINAL_PAD + cell.x * cursor.x as f32, y),
                     size: size(cell.x, cell.y),
                 },
                 rgb(theme::CURSOR),
@@ -752,20 +723,7 @@ pub fn paint(
         x = bounds.origin.x + theme::TERMINAL_PAD;
         let mut col = 0u16;
         for span in &row.spans {
-            paint_span_text(
-                span,
-                col,
-                x,
-                y,
-                cell,
-                font,
-                font_size,
-                &highlights,
-                link_color,
-                underline,
-                window,
-                cx,
-            );
+            paint_span_text(span, col, x, y, cell, font, font_size, &highlights, link_color, underline, window, cx);
             x += cell.x * span.columns as f32;
             col = col.saturating_add(span.columns);
         }
@@ -826,12 +784,7 @@ fn paint_span_text(
         let columns = to.saturating_sub(from);
         let width = cell.x * columns as f32;
         let relative = from.saturating_sub(span_col);
-        let text: String = span
-            .text
-            .chars()
-            .skip(relative as usize)
-            .take(columns as usize)
-            .collect();
+        let text: String = span.text.chars().skip(relative as usize).take(columns as usize).collect();
         if !text.is_empty() {
             let run_font = if span.bold || highlighted {
                 font.clone().bold()
@@ -844,11 +797,7 @@ fn paint_span_text(
                 &[TextRun {
                     len: text.len(),
                     font: run_font,
-                    color: if highlighted {
-                        link_color
-                    } else {
-                        span.fg.to_hsla()
-                    },
+                    color: if highlighted { link_color } else { span.fg.to_hsla() },
                     background_color: None,
                     underline: highlighted.then_some(underline),
                     strikethrough: None,
