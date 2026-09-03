@@ -692,9 +692,11 @@ pub fn paint(
 ) {
     window.paint_quad(fill(bounds, frame.background.to_hsla()));
 
-    let mut wash: Hsla = rgb(theme::ACCENT).into();
+    let colors = theme::colors(cx);
+    let mut wash: Hsla = rgb(colors.accent).into();
     wash.a = 0.22;
-    let link_color: Hsla = rgb(theme::ACCENT).into();
+    let link_color: Hsla = rgb(colors.accent).into();
+    let cursor_color = rgb(colors.cursor);
     let underline = UnderlineStyle {
         thickness: px(1.0),
         color: Some(link_color),
@@ -742,7 +744,7 @@ pub fn paint(
                         origin: point(bounds.origin.x + theme::TERMINAL_PAD + cell.x * cursor.x as f32, y),
                         size: size(cell.x, cell.y),
                     },
-                    rgb(theme::CURSOR),
+                    cursor_color,
                 ));
             }
         }
@@ -764,7 +766,7 @@ pub fn paint(
                         origin: point(bounds.origin.x + theme::TERMINAL_PAD + cell.x * cursor.x as f32, y),
                         size: size(width, cell.y),
                     },
-                    rgb(theme::CURSOR),
+                    cursor_color,
                 ));
             }
         }
@@ -892,7 +894,7 @@ pub fn measure_cell(window: &mut Window, cx: &gpui::App) -> Point<Pixels> {
         &[TextRun {
             len: SAMPLE.len(),
             font,
-            color: rgb(theme::TEXT).into(),
+            color: rgb(theme::colors(cx).text).into(),
             background_color: None,
             underline: None,
             strikethrough: None,

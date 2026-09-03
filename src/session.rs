@@ -16,6 +16,7 @@ use libghostty_vt::{
     render::{CellIterator, RenderState, RowIterator},
     selection::FormatOptions,
     selection::gesture::{DragEvent, Geometry, Gesture, PressEvent, ReleaseEvent},
+    style::{PaletteIndex, RgbColor},
     terminal::{
         ConformanceLevel, DeviceAttributeFeature, DeviceAttributes, DeviceType, Mode, Point, PointCoordinate,
         PrimaryDeviceAttributes, ScrollViewport, SecondaryDeviceAttributes, SizeReportSize,
@@ -61,6 +62,7 @@ enum Command {
     Paste(String),
     ClearScreen,
     SetScrollback(u32),
+    SetTheme(theme::Colors),
 }
 
 enum Event {
@@ -120,7 +122,16 @@ impl Session {
             })
             .expect("failed to spawn pty forwarder");
 
-        start_emulator(pty, command_rx, event_tx, cols, rows, cell, crate::config::scrollback_lines(cx));
+        start_emulator(
+            pty,
+            command_rx,
+            event_tx,
+            cols,
+            rows,
+            cell,
+            crate::config::scrollback_lines(cx),
+            theme::colors(cx),
+        );
 
         let focus = cx.focus_handle();
         focus.focus(window);
@@ -154,7 +165,7 @@ impl Session {
             title: format!("Tab {}", index + 1),
             focus,
             commands: command_tx,
-            frame: empty_frame(),
+            frame: empty_frame(theme::colors(cx)),
             last_grid: (cols, rows),
             cell_size: cell,
             content_bounds: None,
@@ -212,6 +223,7 @@ impl Session {
         let _ = self
             .commands
             .send(Command::SetScrollback(crate::config::scrollback_lines(cx)));
+        let _ = self.commands.send(Command::SetTheme(theme::colors(cx)));
         cx.notify();
     }
 
@@ -427,13 +439,14 @@ impl Render for Session {
         let hovered = self.hovered_link.clone();
         let link_menu = self.link_menu.clone();
         let entity = cx.entity();
+        let colors = theme::colors(cx);
 
         div()
             .id("terminal")
             .track_focus(&self.focus)
             .relative()
             .size_full()
-            .bg(rgb(theme::WINDOW))
+            .bg(rgb(colors.term_bg))
             .overflow_hidden()
             .cursor(if self.hovered_link.is_some() {
                 CursorStyle::PointingHand
@@ -490,6 +503,8 @@ fn link_context_menu(menu: LinkMenu, cx: &mut Context<Session>) -> impl IntoElem
         LinkAction::OpenFolder(_) => "Open Folder",
     };
 
+    let colors = theme::colors(cx);
+
     div()
         .absolute()
         .top_0()
@@ -514,9 +529,9 @@ fn link_context_menu(menu: LinkMenu, cx: &mut Context<Session>) -> impl IntoElem
                     .min_w(px(148.0))
                     .py_1()
                     .rounded_md()
-                    .bg(rgb(theme::TOOLTIP))
+                    .bg(rgb(colors.tooltip))
                     .border_1()
-                    .border_color(rgb(theme::SIDEBAR_BORDER))
+                    .border_color(rgb(colors.sidebar_border))
                     .shadow_md()
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
@@ -533,15 +548,16 @@ fn link_menu_item(
     cx: &mut Context<Session>,
     on_click: impl Fn(&mut Session, &mut Context<Session>) + 'static,
 ) -> impl IntoElement {
+    let colors = theme::colors(cx);
     div()
         .id(id)
         .w_full()
         .px_3()
         .py_1()
         .text_sm()
-        .text_color(rgb(theme::TEXT))
+        .text_color(rgb(colors.text))
         .cursor_pointer()
-        .hover(|style| style.bg(rgb(theme::TAB_HOVER)))
+        .hover(move |style| style.bg(rgb(colors.tab_hover)))
         .child(label)
         .on_mouse_down(
             MouseButton::Left,
@@ -562,13 +578,52 @@ fn reserved_shortcut(modifiers: &gpui::Modifiers, key: &str) -> bool {
     modifiers.control && matches!(key, ",")
 }
 
-fn empty_frame() -> Frame {
+fn empty_frame(colors: theme::Colors) -> Frame {
+    let (br, bg, bb) = theme::Colors::rgb_parts(colors.term_bg);
+    let (fr, fg, fb) = theme::Colors::rgb_parts(colors.term_fg);
     Frame {
-        background: frame::Rgb { r: 15, g: 17, b: 21 },
-        _foreground: frame::Rgb { r: 192, g: 202, b: 245 },
+        background: frame::Rgb { r: br, g: bg, b: bb },
+        _foreground: frame::Rgb { r: fr, g: fg, b: fb },
         rows: Vec::new(),
         cursor: None,
     }
+}
+
+fn ghostty_rgb(color: u32) -> RgbColor {
+    let (r, g, b) = theme::Colors::rgb_parts(color);
+    RgbColor { r, g, b }
+}
+
+fn apply_terminal_theme(terminal: &mut Terminal, colors: theme::Colors) -> Result<(), Box<dyn std::error::Error>> {
+    terminal
+        .set_default_fg_color(Some(ghostty_rgb(colors.term_fg)))?
+        .set_default_bg_color(Some(ghostty_rgb(colors.term_bg)))?
+        .set_default_cursor_color(Some(ghostty_rgb(colors.cursor)))?;
+
+    let mut palette = terminal.default_color_palette()?;
+    let indexes = [
+        PaletteIndex::BLACK,
+        PaletteIndex::RED,
+        PaletteIndex::GREEN,
+        PaletteIndex::YELLOW,
+        PaletteIndex::BLUE,
+        PaletteIndex::MAGENTA,
+        PaletteIndex::CYAN,
+        PaletteIndex::WHITE,
+        PaletteIndex::BRIGHT_BLACK,
+        PaletteIndex::BRIGHT_RED,
+        PaletteIndex::BRIGHT_GREEN,
+        PaletteIndex::BRIGHT_YELLOW,
+        PaletteIndex::BRIGHT_BLUE,
+        PaletteIndex::BRIGHT_MAGENTA,
+        PaletteIndex::BRIGHT_CYAN,
+        PaletteIndex::BRIGHT_WHITE,
+    ];
+    for (index, color) in indexes.into_iter().zip(colors.ansi) {
+        palette.set(index, ghostty_rgb(color));
+    }
+    terminal.set_default_color_palette(Some(palette))?;
+    Ok(())
 }
 
 fn start_emulator(
@@ -579,11 +634,12 @@ fn start_emulator(
     rows: u16,
     cell: gpui::Point<Pixels>,
     scrollback_lines: u32,
+    colors: theme::Colors,
 ) {
     thread::Builder::new()
         .name("libghostty".into())
         .spawn(move || {
-            if let Err(error) = run_emulator(pty, commands, events, cols, rows, cell, scrollback_lines) {
+            if let Err(error) = run_emulator(pty, commands, events, cols, rows, cell, scrollback_lines, colors) {
                 eprintln!("terminal thread exited: {error}");
             }
         })
@@ -598,6 +654,7 @@ fn run_emulator(
     rows: u16,
     cell: gpui::Point<Pixels>,
     scrollback_lines: u32,
+    colors: theme::Colors,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let grid = Arc::new(Mutex::new(SizeReportSize {
         rows,
@@ -609,6 +666,7 @@ fn run_emulator(
     let mut terminal = Terminal::new(cols, rows)?;
     terminal.set_scrollback_max_lines(Some(scrollback_lines as usize))?;
     terminal.resize(cols, rows, f32::from(cell.x) as u32, f32::from(cell.y) as u32)?;
+    apply_terminal_theme(&mut terminal, colors)?;
 
     let writer = pty.writer.clone();
     terminal.on_pty_write(move |_term, data| {
@@ -730,6 +788,9 @@ fn run_emulator(
             }
             Command::SetScrollback(lines) => {
                 terminal.set_scrollback_max_lines(Some(lines as usize))?;
+            }
+            Command::SetTheme(colors) => {
+                apply_terminal_theme(&mut terminal, colors)?;
             }
         }
 

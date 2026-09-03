@@ -61,10 +61,10 @@ pub fn overlay(cx: &App) -> impl IntoElement {
         .flex_col()
         .gap_2()
         .items_end()
-        .children(items.into_iter().map(toast_card))
+        .children(items.into_iter().map(|toast| toast_card(toast, theme::colors(cx))))
 }
 
-fn toast_card(toast: Toast) -> impl IntoElement {
+fn toast_card(toast: Toast, colors: theme::Colors) -> impl IntoElement {
     let id = toast.id;
     div()
         .id(("toast", id))
@@ -72,12 +72,12 @@ fn toast_card(toast: Toast) -> impl IntoElement {
         .px_3()
         .py_2()
         .rounded_md()
-        .bg(rgb(theme::TOOLTIP))
+        .bg(rgb(colors.tooltip))
         .border_1()
-        .border_color(rgb(theme::SIDEBAR_BORDER))
+        .border_color(rgb(colors.sidebar_border))
         .shadow_md()
         .text_sm()
-        .text_color(rgb(theme::TEXT))
+        .text_color(rgb(colors.text))
         .cursor_pointer()
         .child(toast.message)
         .on_mouse_down(MouseButton::Left, move |_, _, cx| {
