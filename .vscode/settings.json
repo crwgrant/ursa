@@ -1,8 +1,0 @@
-{
-  "rust-analyzer.cargo.extraEnv": {
-    "DEVELOPER_DIR": "/Applications/Xcode.app/Contents/Developer"
-  },
-  "rust-analyzer.check.extraEnv": {
-    "DEVELOPER_DIR": "/Applications/Xcode.app/Contents/Developer"
-  }
-}
