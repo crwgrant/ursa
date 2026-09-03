@@ -1,7 +1,9 @@
+use std::time::Duration;
+
 use gpui::{
-    AnyElement, App, Bounds, Context, Corner, FocusHandle, Global, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
-    MouseDownEvent, ParentElement, Pixels, Render, Styled, TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions,
-    anchored, div, prelude::*, px, rgb, size,
+    Animation, AnimationExt as _, AnyElement, App, Bounds, Context, Corner, CursorStyle, Entity, FocusHandle, Focusable, Global,
+    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, ParentElement, Pixels, Render, Styled,
+    TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, anchored, div, prelude::*, px, rgb, size,
 };
 
 use crate::{config, notify, theme};
@@ -22,14 +24,25 @@ enum MenuKind {
 pub struct SettingsPage {
     focus: FocusHandle,
     open_menu: Option<(MenuKind, gpui::Point<Pixels>)>,
+    scrollback: Entity<ScrollbackField>,
 }
 
 impl SettingsPage {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus = cx.focus_handle();
         focus.focus(window);
-        cx.observe_global::<config::AppSettings>(|_, cx| cx.notify()).detach();
-        Self { focus, open_menu: None }
+        let scrollback = cx.new(|cx| ScrollbackField::new(config::scrollback_lines(cx), window, cx));
+        cx.observe_global::<config::AppSettings>(|this, cx| {
+            let lines = config::scrollback_lines(cx);
+            this.scrollback.update(cx, |field, cx| field.sync_from_config(lines, cx));
+            cx.notify();
+        })
+        .detach();
+        Self {
+            focus,
+            open_menu: None,
+            scrollback,
+        }
     }
 
     fn toggle_menu(&mut self, kind: MenuKind, event: &MouseDownEvent, cx: &mut Context<Self>) {
@@ -181,26 +194,7 @@ impl Render for SettingsPage {
                     .child(font_family_row(family.clone(), cx))
                     .child(font_size_row(font_size, cx))
                     .child(section_label("Terminal"))
-                    .child(setting_row(
-                        "Scrollback",
-                        format!("{} lines", config.scrollback_lines),
-                        Some(("scrollback-dec", "−", |cx| {
-                            config::update(cx, |config| {
-                                config.scrollback_lines = config
-                                    .scrollback_lines
-                                    .saturating_sub(config::SCROLLBACK_STEP)
-                                    .max(config::SCROLLBACK_MIN);
-                            });
-                        })),
-                        Some(("scrollback-inc", "+", |cx| {
-                            config::update(cx, |config| {
-                                config.scrollback_lines = config
-                                    .scrollback_lines
-                                    .saturating_add(config::SCROLLBACK_STEP)
-                                    .min(config::SCROLLBACK_MAX);
-                            });
-                        })),
-                    ))
+                    .child(scrollback_row(self.scrollback.clone()))
                     .child(section_label("Config file"))
                     .child(div().text_xs().text_color(rgb(theme::TEXT_DIM)).child(path))
                     .children(error.map(|message| {
@@ -241,7 +235,7 @@ impl Render for SettingsPage {
                     .border_color(rgb(theme::SIDEBAR_BORDER))
                     .text_xs()
                     .text_color(rgb(theme::TEXT_DIM))
-                    .child("Changes apply immediately and are written to the config file."),
+                    .child("Font changes apply immediately. Scrollback saves when the field loses focus."),
             )
             .children(menu)
     }
@@ -373,56 +367,214 @@ fn format_font_size(size: f32) -> String {
     }
 }
 
+struct ScrollbackField {
+    focus: FocusHandle,
+    text: String,
+    committed: String,
+    selected: bool,
+}
+
+impl ScrollbackField {
+    fn new(lines: u32, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let text = lines.to_string();
+        let focus = cx.focus_handle();
+        cx.on_blur(&focus, window, |this, _window, cx| this.commit(cx)).detach();
+        Self {
+            focus,
+            committed: text.clone(),
+            text,
+            selected: false,
+        }
+    }
+
+    fn sync_from_config(&mut self, lines: u32, cx: &mut Context<Self>) {
+        if self.text != self.committed {
+            return;
+        }
+        let next = lines.to_string();
+        if self.text != next {
+            self.text = next.clone();
+            self.committed = next;
+            cx.notify();
+        }
+    }
+
+    fn commit(&mut self, cx: &mut Context<Self>) {
+        if let Some(lines) = config::parse_scrollback(&self.text) {
+            self.text = lines.to_string();
+            if self.committed != self.text {
+                self.committed = self.text.clone();
+                config::update(cx, |config| config.scrollback_lines = lines);
+            }
+        } else {
+            self.text = self.committed.clone();
+        }
+        self.selected = false;
+        cx.notify();
+    }
+
+    fn revert(&mut self, cx: &mut Context<Self>) {
+        self.text = self.committed.clone();
+        self.selected = false;
+        cx.notify();
+    }
+
+    fn insert_digits(&mut self, digits: &str, cx: &mut Context<Self>) {
+        if digits.is_empty() {
+            return;
+        }
+        if self.selected {
+            self.text = digits.to_string();
+            self.selected = false;
+        } else {
+            self.text.push_str(digits);
+        }
+        cx.notify();
+    }
+
+    fn handle_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        let modifiers = &event.keystroke.modifiers;
+        let key = event.keystroke.key.as_str();
+        if modifiers.platform && key == "v" {
+            let digits = cx
+                .read_from_clipboard()
+                .and_then(|item| item.text())
+                .map(|text| text.chars().filter(|ch| ch.is_ascii_digit()).collect::<String>())
+                .unwrap_or_default();
+            self.insert_digits(&digits, cx);
+            cx.stop_propagation();
+            return;
+        }
+        if modifiers.platform && key == "c" {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(self.text.clone()));
+            cx.stop_propagation();
+            return;
+        }
+        if modifiers.platform || modifiers.control || modifiers.alt {
+            return;
+        }
+        if key == "escape" {
+            self.revert(cx);
+            cx.stop_propagation();
+            return;
+        }
+        if key == "enter" {
+            self.commit(cx);
+            cx.stop_propagation();
+            return;
+        }
+        if key == "backspace" {
+            if self.selected {
+                self.text.clear();
+                self.selected = false;
+            } else {
+                self.text.pop();
+            }
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
+        let digit = event
+            .keystroke
+            .key_char
+            .as_deref()
+            .filter(|text| text.len() == 1 && text.chars().all(|ch| ch.is_ascii_digit()))
+            .or_else(|| (key.len() == 1 && key.chars().all(|ch| ch.is_ascii_digit())).then_some(key));
+        if let Some(digit) = digit {
+            self.insert_digits(digit, cx);
+            cx.stop_propagation();
+        }
+    }
+}
+
+impl Focusable for ScrollbackField {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+
+impl Render for ScrollbackField {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let focused = self.focus.is_focused(window);
+        let selected = focused && self.selected;
+        div()
+            .id("scrollback-field")
+            .track_focus(&self.focus)
+            .flex()
+            .items_center()
+            .min_w(px(180.0))
+            .h(px(26.0))
+            .px_2()
+            .rounded_md()
+            .bg(if selected {
+                rgb(theme::TAB_ACTIVE)
+            } else {
+                rgb(theme::BUTTON)
+            })
+            .border_1()
+            .border_color(if focused {
+                rgb(theme::ACCENT)
+            } else {
+                rgb(theme::SIDEBAR_BORDER)
+            })
+            .cursor(CursorStyle::IBeam)
+            .on_key_down(cx.listener(|this, event, _window, cx| this.handle_key(event, cx)))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _event, window, cx| {
+                    this.focus.focus(window);
+                    this.selected = true;
+                    cx.notify();
+                    cx.stop_propagation();
+                }),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .flex_1()
+                    .min_w_0()
+                    .child(div().text_sm().child(self.text.clone()))
+                    .children(focused.then(|| {
+                        div()
+                            .ml(px(1.0))
+                            .w(px(1.5))
+                            .h(px(14.0))
+                            .bg(rgb(theme::TEXT))
+                            .rounded_sm()
+                            .with_animation(
+                                "scrollback-caret",
+                                Animation::new(Duration::from_millis(1000)).repeat(),
+                                |caret, delta| caret.opacity(if delta < 0.5 { 1.0 } else { 0.0 }),
+                            )
+                    })),
+            )
+    }
+}
+
+fn scrollback_row(field: Entity<ScrollbackField>) -> impl IntoElement {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_3()
+        .child(div().text_sm().child("Scrollback"))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(field)
+                .child(div().text_sm().text_color(rgb(theme::TEXT_DIM)).child("lines")),
+        )
+}
+
 fn section_label(label: &'static str) -> impl IntoElement {
     div()
         .text_xs()
         .font_weight(gpui::FontWeight::SEMIBOLD)
         .text_color(rgb(theme::TEXT_DIM))
         .child(label)
-}
-
-fn setting_row(
-    label: &'static str,
-    value: String,
-    left: Option<(&'static str, &'static str, fn(&mut App))>,
-    right: Option<(&'static str, &'static str, fn(&mut App))>,
-) -> impl IntoElement {
-    div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap_3()
-        .child(div().text_sm().child(label))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .children(left.map(|(id, glyph, action)| stepper_button(id, glyph, action)))
-                .child(div().min_w(px(120.0)).text_sm().text_color(rgb(theme::TEXT)).child(value))
-                .children(right.map(|(id, glyph, action)| stepper_button(id, glyph, action))),
-        )
-}
-
-fn stepper_button(id: &'static str, label: &'static str, on_click: fn(&mut App)) -> impl IntoElement {
-    div()
-        .id(id)
-        .h(px(22.0))
-        .w(px(22.0))
-        .rounded_md()
-        .flex()
-        .items_center()
-        .justify_center()
-        .bg(rgb(theme::BUTTON))
-        .text_color(rgb(theme::TEXT))
-        .text_sm()
-        .cursor_pointer()
-        .hover(|style| style.bg(rgb(theme::TAB_HOVER)))
-        .child(label)
-        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-            on_click(cx);
-            cx.stop_propagation();
-        })
 }
 
 fn text_button(id: &'static str, label: &'static str, on_click: fn(&mut App)) -> impl IntoElement {

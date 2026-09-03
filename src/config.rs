@@ -14,7 +14,6 @@ pub const FONT_SIZE_MIN: f32 = 8.0;
 pub const FONT_SIZE_MAX: f32 = 48.0;
 pub const SCROLLBACK_MIN: u32 = 100;
 pub const SCROLLBACK_MAX: u32 = 100_000;
-pub const SCROLLBACK_STEP: u32 = 500;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
@@ -266,6 +265,17 @@ pub fn font_size_presets() -> &'static [f32] {
     &[
         8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 18.0, 20.0, 22.0, 24.0, 28.0, 32.0, 36.0, 42.0, 48.0,
     ]
+}
+
+pub fn parse_scrollback(text: &str) -> Option<u32> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    trimmed
+        .parse::<u32>()
+        .ok()
+        .map(|lines| lines.clamp(SCROLLBACK_MIN, SCROLLBACK_MAX))
 }
 
 pub fn font_size_choices(current: f32) -> Vec<f32> {
@@ -580,5 +590,16 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn parse_scrollback_clamps_and_rejects_invalid() {
+        assert_eq!(parse_scrollback("2000"), Some(2000));
+        assert_eq!(parse_scrollback("  8000  "), Some(8000));
+        assert_eq!(parse_scrollback("1"), Some(SCROLLBACK_MIN));
+        assert_eq!(parse_scrollback("999999"), Some(SCROLLBACK_MAX));
+        assert_eq!(parse_scrollback(""), None);
+        assert_eq!(parse_scrollback("abc"), None);
+        assert_eq!(parse_scrollback("20.5"), None);
     }
 }
