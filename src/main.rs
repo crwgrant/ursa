@@ -5,8 +5,8 @@ mod session;
 mod theme;
 
 use gpui::{
-    actions, div, prelude::*, px, rgb, size, AnyView, App, Application, Bounds, Context,
-    KeyBinding, MouseButton, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
+    AnyView, App, Application, Bounds, Context, KeyBinding, MouseButton, SharedString, TitlebarOptions, Window, WindowBounds,
+    WindowOptions, actions, div, prelude::*, px, rgb, size,
 };
 use session::{Session, SessionEvent};
 
@@ -32,17 +32,13 @@ impl Workspace {
         let Some(tab) = self.tabs.get(index).cloned() else {
             return;
         };
-        cx.subscribe_in(
-            &tab,
-            window,
-            |this, session, event: &SessionEvent, window, cx| {
-                if matches!(event, SessionEvent::Exited) {
-                    if let Some(index) = this.tabs.iter().position(|tab| tab == session) {
-                        this.close_tab(index, window, cx);
-                    }
+        cx.subscribe_in(&tab, window, |this, session, event: &SessionEvent, window, cx| {
+            if matches!(event, SessionEvent::Exited) {
+                if let Some(index) = this.tabs.iter().position(|tab| tab == session) {
+                    this.close_tab(index, window, cx);
                 }
-            },
-        )
+            }
+        })
         .detach();
     }
 
@@ -126,9 +122,7 @@ impl Render for Workspace {
             .text_color(rgb(theme::TEXT))
             .font_family("Menlo")
             .on_action(cx.listener(|this, _: &NewTab, window, cx| this.add_tab(window, cx)))
-            .on_action(
-                cx.listener(|this, _: &CloseTab, window, cx| this.close_active_tab(window, cx)),
-            )
+            .on_action(cx.listener(|this, _: &CloseTab, window, cx| this.close_active_tab(window, cx)))
             .on_action(cx.listener(|this, _: &Copy, _window, cx| this.copy_active(cx)))
             .on_action(cx.listener(|this, _: &Paste, _window, cx| this.paste_active(cx)))
             .child(self.render_sidebar(&tabs, cx))
@@ -137,11 +131,7 @@ impl Render for Workspace {
 }
 
 impl Workspace {
-    fn render_sidebar(
-        &self,
-        tabs: &[(usize, SharedString, bool)],
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render_sidebar(&self, tabs: &[(usize, SharedString, bool)], cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .w(px(theme::SIDEBAR_WIDTH))
             .h_full()
@@ -175,18 +165,15 @@ impl Workspace {
                     .px_2()
                     .gap_1()
                     .overflow_y_scroll()
-                    .children(tabs.iter().map(|(index, title, selected)| {
-                        tab_row(*index, title.clone(), *selected, cx)
-                    })),
+                    .children(
+                        tabs.iter()
+                            .map(|(index, title, selected)| tab_row(*index, title.clone(), *selected, cx)),
+                    ),
             )
     }
 
     fn render_terminal(&self) -> impl IntoElement {
-        div()
-            .flex_1()
-            .h_full()
-            .min_w_0()
-            .child(self.tabs[self.active].clone())
+        div().flex_1().h_full().min_w_0().child(self.tabs[self.active].clone())
     }
 }
 
@@ -206,10 +193,7 @@ fn new_tab_button(cx: &mut Context<Workspace>) -> impl IntoElement {
         .hover(|style| style.bg(rgb(theme::TAB_HOVER)))
         .tooltip(action_tooltip("New Tab", "⌘T"))
         .child("+")
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(|this, _event, window, cx| this.add_tab(window, cx)),
-        )
+        .on_mouse_down(MouseButton::Left, cx.listener(|this, _event, window, cx| this.add_tab(window, cx)))
 }
 
 fn close_tab_button(index: usize, cx: &mut Context<Workspace>) -> impl IntoElement {
@@ -237,12 +221,7 @@ fn close_tab_button(index: usize, cx: &mut Context<Workspace>) -> impl IntoEleme
         )
 }
 
-fn tab_row(
-    index: usize,
-    title: SharedString,
-    selected: bool,
-    cx: &mut Context<Workspace>,
-) -> impl IntoElement {
+fn tab_row(index: usize, title: SharedString, selected: bool, cx: &mut Context<Workspace>) -> impl IntoElement {
     let background = if selected {
         rgb(theme::TAB_ACTIVE)
     } else {
@@ -257,13 +236,7 @@ fn tab_row(
         .py_2()
         .bg(background)
         .cursor_pointer()
-        .hover(|style| {
-            if selected {
-                style
-            } else {
-                style.bg(rgb(theme::TAB_HOVER))
-            }
-        })
+        .hover(|style| if selected { style } else { style.bg(rgb(theme::TAB_HOVER)) })
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, _event, window, cx| this.select_tab(index, window, cx)),
@@ -285,11 +258,7 @@ fn tab_row(
                         .min_w_0()
                         .text_sm()
                         .text_ellipsis()
-                        .text_color(if selected {
-                            rgb(theme::TEXT)
-                        } else {
-                            rgb(theme::TEXT_DIM)
-                        })
+                        .text_color(if selected { rgb(theme::TEXT) } else { rgb(theme::TEXT_DIM) })
                         .child(title),
                 )
                 .child(close_tab_button(index, cx)),
@@ -331,11 +300,7 @@ impl Render for ActionTooltip {
             .shadow_md()
             .text_xs()
             .child(div().text_color(rgb(theme::TEXT)).child(self.label.clone()))
-            .child(
-                div()
-                    .text_color(rgb(theme::TEXT_DIM))
-                    .child(self.shortcut.clone()),
-            )
+            .child(div().text_color(rgb(theme::TEXT_DIM)).child(self.shortcut.clone()))
     }
 }
 

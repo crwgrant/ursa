@@ -1,4 +1,4 @@
-use gpui::{px, Pixels};
+use gpui::{Pixels, px};
 
 pub const FONT_FAMILY: &str = "Menlo";
 pub const FONT_SIZE: f32 = 13.0;
