@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use gpui::{
-    Bounds, Font, FontFallbacks, FontStyle, FontWeight, Hsla, Pixels, Point, SharedString, TextRun, UnderlineStyle, Window, fill,
-    point, px, rgb, size,
+    Bounds, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Hsla, Pixels, Point, SharedString, TextRun, UnderlineStyle,
+    Window, fill, point, px, rgb, size,
 };
 use libghostty_vt::{
     Terminal,
@@ -854,11 +854,19 @@ fn paint_span_text(
 pub fn terminal_font(cx: &gpui::App) -> Font {
     Font {
         family: crate::config::font_family(cx),
-        features: Default::default(),
+        features: terminal_font_features(),
         fallbacks: terminal_font_fallbacks(),
         weight: FontWeight::NORMAL,
         style: FontStyle::Normal,
     }
+}
+
+/// DirectWrite turns `liga` / `clig` / `calt` on unless they are explicitly
+/// disabled. Fonts such as JetBrains Mono then fold pairs like `!=` into one
+/// glyph, and GPUI's per-glyph `force_width` snap no longer matches the
+/// character grid.
+fn terminal_font_features() -> FontFeatures {
+    FontFeatures(std::sync::Arc::new(vec![("calt".into(), 0), ("liga".into(), 0), ("clig".into(), 0)]))
 }
 
 fn terminal_font_fallbacks() -> Option<FontFallbacks> {
