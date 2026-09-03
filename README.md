@@ -12,6 +12,7 @@ A terminal emulator built in Rust with [GPUI](https://github.com/zed-industries/
 - **⌘-click** filesystem paths to open Finder at that folder (a file path opens the parent directory)
 - Right-click a URL, URI, or path for **Copy**, **Paste**, and **Open Link** (or **Open Folder**)
 - In-app toasts for copy and paste feedback (bottom-right, click or wait to dismiss)
+- **⌘K** clears the screen and scrollback; the shell redraws the prompt at the top
 - New window with **⌘N** or **File → New Window**; closing the last tab leaves the app running so a Dock click (or ⌘N) can open another
 - Typing `exit` in the top-level shell closes that tab; the last tab closes the window without quitting the app
 
@@ -48,6 +49,7 @@ The window title is **Ghostterm**. On macOS, `$SHELL` is used when present (othe
 | Copy link | Right-click a URL/path → Copy |
 | Copy selection | ⌘C |
 | Paste | ⌘V or right-click a URL/path → Paste |
+| Clear screen | ⌘K |
 
 On Windows, use **Ctrl+Shift** in place of **⌘** (for example **Ctrl+Shift+T** for a new tab, **Ctrl+Shift+C** / **Ctrl+Shift+V** to copy and paste). **Ctrl+C** still goes to the shell.
 
@@ -58,7 +60,7 @@ On Windows, use **Ctrl+Shift** in place of **⌘** (for example **Ctrl+Shift+T**
 - [x] Copy and paste (⌘C / ⌘V)
 - [x] Delete by word and line (⌥⌫ / ⌘⌫ / ⌥⌦ / ⌘⌦)
 - [x] Bell (audible or visual) and richer tab titles from the process
-- [ ] Clear screen (⌘K)
+- [x] Clear screen (⌘K)
 
 ### Selection and clipboard
 

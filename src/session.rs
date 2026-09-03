@@ -59,6 +59,7 @@ enum Command {
     ClearSelection,
     Copy(flume::Sender<Option<String>>),
     Paste(String),
+    ClearScreen,
 }
 
 enum Event {
@@ -199,6 +200,10 @@ impl Session {
             return;
         }
         let _ = self.commands.send(Command::Paste(text));
+    }
+
+    pub fn clear_screen(&self) {
+        let _ = self.commands.send(Command::ClearScreen);
     }
 
     fn handle_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
@@ -428,6 +433,7 @@ impl Render for Session {
             .on_key_down(cx.listener(|this, event, _window, cx| this.handle_key(event, cx)))
             .on_action(cx.listener(|this, _: &crate::Copy, _window, cx| this.copy_selection(cx)))
             .on_action(cx.listener(|this, _: &crate::Paste, _window, cx| this.paste_clipboard(cx)))
+            .on_action(cx.listener(|this, _: &crate::ClearScreen, _window, _cx| this.clear_screen()))
             .on_modifiers_changed(cx.listener(|this, event, window, cx| this.handle_modifiers(event, window, cx)))
             .on_scroll_wheel(cx.listener(|this, event, _window, cx| this.handle_scroll(event, cx)))
             .on_mouse_down(
@@ -537,7 +543,7 @@ fn link_menu_item(
 }
 
 fn reserved_shortcut(modifiers: &gpui::Modifiers, key: &str) -> bool {
-    if modifiers.platform && matches!(key, "q" | "t" | "w" | "n" | "c" | "v") {
+    if modifiers.platform && matches!(key, "q" | "t" | "w" | "n" | "c" | "v" | "k") {
         return true;
     }
     modifiers.control && modifiers.shift && matches!(key, "t" | "w" | "c" | "v")
@@ -697,6 +703,15 @@ fn run_emulator(
                 gesture.reset(&terminal);
                 let _ = terminal.set_selection(None);
                 write_paste(&pty, &terminal, text);
+            }
+            Command::ClearScreen => {
+                gesture.reset(&terminal);
+                let _ = terminal.set_selection(None);
+                terminal.scroll_viewport(ScrollViewport::Bottom);
+                // CSI 3J drops xterm scrollback; CSI H/2J clears the active
+                // display. Form feed asks the shell (or vim) to redraw.
+                terminal.vt_write(b"\x1b[3J\x1b[H\x1b[2J");
+                pty::write_pty(&pty.writer, b"\x0c");
             }
         }
 
