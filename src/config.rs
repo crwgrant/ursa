@@ -12,7 +12,6 @@ use crate::{notify, pty, theme};
 pub const DEFAULT_SCROLLBACK: u32 = 2000;
 pub const FONT_SIZE_MIN: f32 = 8.0;
 pub const FONT_SIZE_MAX: f32 = 48.0;
-pub const FONT_SIZE_STEP: f32 = 1.0;
 pub const SCROLLBACK_MIN: u32 = 100;
 pub const SCROLLBACK_MAX: u32 = 100_000;
 pub const SCROLLBACK_STEP: u32 = 500;
@@ -259,6 +258,22 @@ pub fn font_choices(current: &str, installed: &[String]) -> Vec<String> {
     rest.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()));
     for name in rest {
         push(&name);
+    }
+    choices
+}
+
+pub fn font_size_presets() -> &'static [f32] {
+    &[
+        8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 18.0, 20.0, 22.0, 24.0, 28.0, 32.0, 36.0, 42.0, 48.0,
+    ]
+}
+
+pub fn font_size_choices(current: f32) -> Vec<f32> {
+    let current = current.clamp(FONT_SIZE_MIN, FONT_SIZE_MAX);
+    let mut choices = font_size_presets().to_vec();
+    if !choices.iter().any(|&size| (size - current).abs() < 0.001) {
+        choices.push(current);
+        choices.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     }
     choices
 }
@@ -547,5 +562,23 @@ mod tests {
         assert!(!choices.iter().any(|name| name.starts_with('.')));
         let menlo = choices.iter().filter(|name| name.eq_ignore_ascii_case("Menlo")).count();
         assert_eq!(menlo, 1);
+    }
+
+    #[test]
+    fn font_size_choices_inserts_custom_size_in_order() {
+        let choices = font_size_choices(17.5);
+        assert!(choices.contains(&13.0));
+        assert!(choices.contains(&17.5));
+        let seventeen = choices.iter().position(|&size| (size - 17.5).abs() < 0.001).unwrap();
+        let sixteen = choices.iter().position(|&size| (size - 16.0).abs() < 0.001).unwrap();
+        let eighteen = choices.iter().position(|&size| (size - 18.0).abs() < 0.001).unwrap();
+        assert!(sixteen < seventeen && seventeen < eighteen);
+        assert_eq!(
+            font_size_choices(13.0)
+                .iter()
+                .filter(|&&size| (size - 13.0).abs() < 0.001)
+                .count(),
+            1
+        );
     }
 }

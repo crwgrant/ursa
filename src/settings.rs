@@ -1,5 +1,5 @@
 use gpui::{
-    App, Bounds, Context, Corner, FocusHandle, Global, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
+    AnyElement, App, Bounds, Context, Corner, FocusHandle, Global, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
     MouseDownEvent, ParentElement, Pixels, Render, Styled, TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions,
     anchored, div, prelude::*, px, rgb, size,
 };
@@ -13,9 +13,15 @@ struct SettingsUi {
 
 impl Global for SettingsUi {}
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MenuKind {
+    FontFamily,
+    FontSize,
+}
+
 pub struct SettingsPage {
     focus: FocusHandle,
-    font_menu: Option<gpui::Point<Pixels>>,
+    open_menu: Option<(MenuKind, gpui::Point<Pixels>)>,
 }
 
 impl SettingsPage {
@@ -23,21 +29,21 @@ impl SettingsPage {
         let focus = cx.focus_handle();
         focus.focus(window);
         cx.observe_global::<config::AppSettings>(|_, cx| cx.notify()).detach();
-        Self { focus, font_menu: None }
+        Self { focus, open_menu: None }
     }
 
-    fn toggle_font_menu(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) {
-        if self.font_menu.is_some() {
-            self.font_menu = None;
+    fn toggle_menu(&mut self, kind: MenuKind, event: &MouseDownEvent, cx: &mut Context<Self>) {
+        if self.open_menu.map(|(open, _)| open) == Some(kind) {
+            self.open_menu = None;
         } else {
-            self.font_menu = Some(event.position);
+            self.open_menu = Some((kind, event.position));
         }
         cx.notify();
         cx.stop_propagation();
     }
 
-    fn dismiss_font_menu(&mut self, cx: &mut Context<Self>) {
-        if self.font_menu.take().is_some() {
+    fn dismiss_menu(&mut self, cx: &mut Context<Self>) {
+        if self.open_menu.take().is_some() {
             cx.notify();
         }
     }
@@ -46,12 +52,20 @@ impl SettingsPage {
         config::update(cx, |config| {
             config.font_family = Some(family);
         });
-        self.font_menu = None;
+        self.open_menu = None;
+        cx.notify();
+    }
+
+    fn select_font_size(&mut self, size: f32, cx: &mut Context<Self>) {
+        config::update(cx, |config| {
+            config.font_size = size;
+        });
+        self.open_menu = None;
         cx.notify();
     }
 
     fn handle_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
-        if event.keystroke.key == "escape" && self.font_menu.take().is_some() {
+        if event.keystroke.key == "escape" && self.open_menu.take().is_some() {
             cx.stop_propagation();
             cx.notify();
         }
@@ -109,12 +123,40 @@ impl Render for SettingsPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let config = config::current(cx);
         let family = config.resolved_font_family();
+        let font_size = config.font_size;
         let path = config::display_path(cx);
         let error = config::load_error(cx);
-        let font_menu = self.font_menu;
-        let font_choices = font_menu.map(|_| {
-            let installed = cx.text_system().all_font_names();
-            config::font_choices(&family, &installed)
+        let open_menu = self.open_menu;
+        let menu: Option<AnyElement> = open_menu.map(|(kind, position)| match kind {
+            MenuKind::FontFamily => {
+                let installed = cx.text_system().all_font_names();
+                let choices = config::font_choices(&family, &installed);
+                let items: Vec<_> = choices
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, name)| {
+                        let selected = name.eq_ignore_ascii_case(&family);
+                        let on_select = name.clone();
+                        dropdown_item(("font-choice", index).into(), name, selected, cx, move |this, cx| {
+                            this.select_font(on_select.clone(), cx);
+                        })
+                    })
+                    .collect();
+                dropdown_overlay("font-family-menu", position, items, cx).into_any_element()
+            }
+            MenuKind::FontSize => {
+                let items: Vec<_> = config::font_size_choices(font_size)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, size)| {
+                        let selected = (size - font_size).abs() < 0.001;
+                        dropdown_item(("font-size", index).into(), format_font_size(size), selected, cx, move |this, cx| {
+                            this.select_font_size(size, cx);
+                        })
+                    })
+                    .collect();
+                dropdown_overlay("font-size-menu", position, items, cx).into_any_element()
+            }
         });
 
         div()
@@ -137,20 +179,7 @@ impl Render for SettingsPage {
                     .flex_col()
                     .child(section_label("Font"))
                     .child(font_family_row(family.clone(), cx))
-                    .child(setting_row(
-                        "Size",
-                        format!("{:.0} pt", config.font_size),
-                        Some(("font-size-dec", "−", |cx| {
-                            config::update(cx, |config| {
-                                config.font_size = (config.font_size - config::FONT_SIZE_STEP).max(config::FONT_SIZE_MIN);
-                            });
-                        })),
-                        Some(("font-size-inc", "+", |cx| {
-                            config::update(cx, |config| {
-                                config.font_size = (config.font_size + config::FONT_SIZE_STEP).min(config::FONT_SIZE_MAX);
-                            });
-                        })),
-                    ))
+                    .child(font_size_row(font_size, cx))
                     .child(section_label("Terminal"))
                     .child(setting_row(
                         "Scrollback",
@@ -214,24 +243,34 @@ impl Render for SettingsPage {
                     .text_color(rgb(theme::TEXT_DIM))
                     .child("Changes apply immediately and are written to the config file."),
             )
-            .children(
-                font_menu
-                    .zip(font_choices)
-                    .map(|(position, choices)| font_family_menu(position, family, choices, cx)),
-            )
+            .children(menu)
     }
 }
 
 fn font_family_row(family: String, cx: &mut Context<SettingsPage>) -> impl IntoElement {
+    dropdown_row("font-family", "Family", family, MenuKind::FontFamily, cx)
+}
+
+fn font_size_row(size: f32, cx: &mut Context<SettingsPage>) -> impl IntoElement {
+    dropdown_row("font-size", "Size", format_font_size(size), MenuKind::FontSize, cx)
+}
+
+fn dropdown_row(
+    id: &'static str,
+    label: &'static str,
+    value: String,
+    kind: MenuKind,
+    cx: &mut Context<SettingsPage>,
+) -> impl IntoElement {
     div()
         .flex()
         .items_center()
         .justify_between()
         .gap_3()
-        .child(div().text_sm().child("Family"))
+        .child(div().text_sm().child(label))
         .child(
             div()
-                .id("font-family")
+                .id(id)
                 .flex()
                 .items_center()
                 .justify_between()
@@ -245,19 +284,19 @@ fn font_family_row(family: String, cx: &mut Context<SettingsPage>) -> impl IntoE
                 .border_color(rgb(theme::SIDEBAR_BORDER))
                 .cursor_pointer()
                 .hover(|style| style.bg(rgb(theme::TAB_HOVER)))
-                .child(div().flex_1().min_w_0().text_sm().text_ellipsis().child(family))
+                .child(div().flex_1().min_w_0().text_sm().text_ellipsis().child(value))
                 .child(div().text_xs().text_color(rgb(theme::TEXT_DIM)).child("▾"))
                 .on_mouse_down(
                     MouseButton::Left,
-                    cx.listener(|this, event, _window, cx| this.toggle_font_menu(event, cx)),
+                    cx.listener(move |this, event, _window, cx| this.toggle_menu(kind, event, cx)),
                 ),
         )
 }
 
-fn font_family_menu(
+fn dropdown_overlay(
+    id: &'static str,
     position: gpui::Point<Pixels>,
-    selected: String,
-    choices: Vec<String>,
+    items: Vec<impl IntoElement>,
     cx: &mut Context<SettingsPage>,
 ) -> impl IntoElement {
     div()
@@ -269,14 +308,14 @@ fn font_family_menu(
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(|this, _event, _window, cx| {
-                this.dismiss_font_menu(cx);
+                this.dismiss_menu(cx);
                 cx.stop_propagation();
             }),
         )
         .child(
             anchored().position(position).anchor(Corner::TopLeft).child(
                 div()
-                    .id("font-family-menu")
+                    .id(id)
                     .occlude()
                     .min_w(px(180.0))
                     .max_w(px(280.0))
@@ -289,18 +328,21 @@ fn font_family_menu(
                     .border_color(rgb(theme::SIDEBAR_BORDER))
                     .shadow_md()
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .children(choices.into_iter().enumerate().map(|(index, family)| {
-                        let selected = family.eq_ignore_ascii_case(&selected);
-                        font_menu_item(index, family, selected, cx)
-                    })),
+                    .children(items),
             ),
         )
 }
 
-fn font_menu_item(index: usize, family: String, selected: bool, cx: &mut Context<SettingsPage>) -> impl IntoElement {
-    let on_select = family.clone();
+fn dropdown_item(
+    id: gpui::ElementId,
+    label: String,
+    selected: bool,
+    cx: &mut Context<SettingsPage>,
+    on_click: impl Fn(&mut SettingsPage, &mut Context<SettingsPage>) + 'static,
+) -> impl IntoElement {
+    let on_click: std::rc::Rc<dyn Fn(&mut SettingsPage, &mut Context<SettingsPage>)> = std::rc::Rc::new(on_click);
     div()
-        .id(("font-choice", index))
+        .id(id)
         .w_full()
         .px_3()
         .py_1()
@@ -313,14 +355,22 @@ fn font_menu_item(index: usize, family: String, selected: bool, cx: &mut Context
         })
         .cursor_pointer()
         .hover(|style| style.bg(rgb(theme::TAB_HOVER)))
-        .child(family)
+        .child(label)
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, _event, _window, cx| {
                 cx.stop_propagation();
-                this.select_font(on_select.clone(), cx);
+                (on_click)(this, cx);
             }),
         )
+}
+
+fn format_font_size(size: f32) -> String {
+    if (size - size.round()).abs() < 0.001 {
+        format!("{:.0} pt", size.round())
+    } else {
+        format!("{size} pt")
+    }
 }
 
 fn section_label(label: &'static str) -> impl IntoElement {
