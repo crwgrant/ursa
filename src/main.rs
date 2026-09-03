@@ -13,7 +13,7 @@ use gpui::{
 };
 use session::{Session, SessionEvent};
 
-actions!(ghostterm, [Quit, NewWindow, NewTab, CloseTab, Copy, Paste]);
+actions!(ghostterm, [Quit, NewWindow, NewTab, CloseTab, Copy, Paste, ClearScreen]);
 
 const APP_ID: &str = "com.crwgrant.ghostterm";
 const WINDOW_WIDTH: f32 = 1100.0;
@@ -109,6 +109,12 @@ impl Workspace {
             tab.update(cx, |session, cx| session.paste_clipboard(cx));
         }
     }
+
+    fn clear_active(&self, cx: &mut Context<Self>) {
+        if let Some(tab) = self.tabs.get(self.active) {
+            tab.update(cx, |session, _cx| session.clear_screen());
+        }
+    }
 }
 
 impl Render for Workspace {
@@ -135,6 +141,7 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| this.close_active_tab(window, cx)))
             .on_action(cx.listener(|this, _: &Copy, _window, cx| this.copy_active(cx)))
             .on_action(cx.listener(|this, _: &Paste, _window, cx| this.paste_active(cx)))
+            .on_action(cx.listener(|this, _: &ClearScreen, _window, cx| this.clear_active(cx)))
             .child(self.render_sidebar(&tabs, cx))
             .child(self.render_terminal())
             .child(notify::overlay(cx))
@@ -342,6 +349,7 @@ fn main() {
             KeyBinding::new("cmd-w", CloseTab, None),
             KeyBinding::new("cmd-c", Copy, None),
             KeyBinding::new("cmd-v", Paste, None),
+            KeyBinding::new("cmd-k", ClearScreen, None),
             KeyBinding::new("ctrl-shift-t", NewTab, None),
             KeyBinding::new("ctrl-shift-w", CloseTab, None),
             KeyBinding::new("ctrl-shift-c", Copy, None),
@@ -364,6 +372,10 @@ fn main() {
             Menu {
                 name: "Edit".into(),
                 items: vec![MenuItem::action("Copy", Copy), MenuItem::action("Paste", Paste)],
+            },
+            Menu {
+                name: "View".into(),
+                items: vec![MenuItem::action("Clear Screen", ClearScreen)],
             },
         ]);
         cx.set_dock_menu(vec![MenuItem::action("New Window", NewWindow)]);
