@@ -7,6 +7,7 @@ A macOS terminal emulator built in Rust with [GPUI](https://github.com/zed-indus
 - Tabbed sessions in a left sidebar: add with **⌘T** or the **+** button, close with **⌘W** or **×**
 - Mouse selection: click-drag, double-click a word, triple-click a line, Option-drag for a block
 - Line and word movement: **⌘← / ⌘→** jump to the start or end of the line; **⌥← / ⌥→** move by word
+- Delete by word and line: **⌥⌫** / **⌥⌦** kill the previous or next word; **⌘⌫** / **⌘⌦** kill to the start or end of the line
 - **⌘-click** `http(s)` URLs to open them in the browser (hold **⌘** to highlight the link first)
 - **⌘-click** filesystem paths to open Finder at that folder (a file path opens the parent directory)
 - Right-click a URL, URI, or path for **Copy**, **Paste**, and **Open Link** (or **Open Folder**)
@@ -38,6 +39,8 @@ The window title is **Ghostterm**. Your `$SHELL` is used when present (otherwise
 | Quit | ⌘Q |
 | Start / end of line | ⌘← / ⌘→ |
 | Previous / next word | ⌥← / ⌥→ |
+| Delete previous / next word | ⌥⌫ / ⌥⌦ |
+| Delete to start / end of line | ⌘⌫ / ⌘⌦ |
 | Open URL or folder | ⌘-click or right-click → Open Link |
 | Copy link | Right-click a URL/path → Copy |
 | Copy selection | ⌘C |
@@ -48,7 +51,7 @@ The window title is **Ghostterm**. Your `$SHELL` is used when present (otherwise
 ### Daily driver
 
 - [x] Copy and paste (⌘C / ⌘V)
-- [ ] Delete by word and line (⌥⌫ / ⌘⌫, maybe ⌥⌦)
+- [x] Delete by word and line (⌥⌫ / ⌘⌫ / ⌥⌦ / ⌘⌦)
 - [ ] IME / composed input (accents, CJK, dead keys)
 - [ ] Bell (audible or visual) and richer tab titles from the process
 - [ ] Clear screen (⌘K)
@@ -99,8 +102,8 @@ Not implemented yet. When we add one, start with unit tests around pure logic, t
 
 - Shift-produced characters (`:@#!` and the rest of the punctuation set) encode to the PTY
 - ⌘← / ⌘→ send beginning/end of line; ⌥← / ⌥→ send word jumps
+- ⌥⌫ / ⌥⌦ send word-kill; ⌘⌫ / ⌘⌦ send kill to start/end of line
 - Reserved shortcuts (⌘Q / ⌘T / ⌘W) are not forwarded as terminal keys
-- Word/line delete sequences once those bindings exist
 
 ### Links and paths
 
