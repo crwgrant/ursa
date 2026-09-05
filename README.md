@@ -61,9 +61,9 @@ Ghostterm reads a TOML file it owns (not libghostty). The file is created the fi
 
 | Platform | Path |
 | --- | --- |
-| macOS | `~/Library/Application Support/Ghostterm/config.toml` |
-| Windows | `%APPDATA%\Ghostterm\config.toml` |
-| Linux | `$XDG_CONFIG_HOME/ghostterm/config.toml` or `~/.config/ghostterm/config.toml` |
+| All | `~/.config/ghostterm/config.toml` |
+
+If `XDG_CONFIG_HOME` is set, that directory is used instead of `~/.config`. An existing folder at the previous locations (`~/Library/Application Support/Ghostterm` on macOS, `%APPDATA%\Ghostterm` on Windows) is still used until you move it.
 
 ```toml
 [font]
