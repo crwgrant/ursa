@@ -820,10 +820,11 @@ fn paint_span_text(
 }
 
 pub fn terminal_font(cx: &gpui::App) -> Font {
+    let family = crate::config::font_family(cx);
     Font {
-        family: crate::config::font_family(cx),
+        family: family.clone(),
         features: terminal_font_features(),
-        fallbacks: terminal_font_fallbacks(),
+        fallbacks: terminal_font_fallbacks(family.as_ref()),
         weight: FontWeight::NORMAL,
         style: FontStyle::Normal,
     }
@@ -837,14 +838,36 @@ fn terminal_font_features() -> FontFeatures {
     FontFeatures(std::sync::Arc::new(vec![("calt".into(), 0), ("liga".into(), 0), ("clig".into(), 0)]))
 }
 
-fn terminal_font_fallbacks() -> Option<FontFallbacks> {
+fn terminal_font_fallbacks(primary: &str) -> Option<FontFallbacks> {
+    let mut fonts = Vec::new();
+    let mut push = |name: &str| {
+        if name.eq_ignore_ascii_case(primary) {
+            return;
+        }
+        if fonts.iter().any(|existing: &String| existing.eq_ignore_ascii_case(name)) {
+            return;
+        }
+        fonts.push(name.to_string());
+    };
+    for name in crate::config::default_font_candidates() {
+        push(name);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        push("Menlo");
+        push("Apple Color Emoji");
+    }
     #[cfg(target_os = "windows")]
     {
-        Some(FontFallbacks::from_fonts(vec!["Consolas".into(), "Courier New".into()]))
+        push("Cascadia Mono");
+        push("Consolas");
+        push("Courier New");
+        push("Segoe UI Emoji");
     }
-    #[cfg(not(target_os = "windows"))]
-    {
+    if fonts.is_empty() {
         None
+    } else {
+        Some(FontFallbacks::from_fonts(fonts))
     }
 }
 

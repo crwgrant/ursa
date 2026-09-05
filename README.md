@@ -80,7 +80,7 @@ Window position, size, which monitor it was on, the sidebar split width, and the
 
 ```toml
 [font]
-family = "Menlo"
+family = "NotoMono Nerd Font"
 size = 13
 
 [appearance]
@@ -93,6 +93,8 @@ cursor = "bar" # or "block"
 on_exit = "close" # or "keep" — close sessions on quit, or keep and restore them
 sessions = true # or false — hide the session sidebar and use horizontal tabs only
 ```
+
+Leave `family` empty or omit it to prefer **NotoMono Nerd Font** (then **NotoMono Nerd Font Mono**) when that font is installed, otherwise the OS mono font (**Menlo** on macOS, **Cascadia Mono** on Windows). A missing glyph still falls back through that list, so Nerd Font icons can appear even when the primary face is Menlo. JetBrains Mono is not a default; it stretches cell spacing in this renderer.
 
 `theme` is the filename stem of a Ghostty `.conf` in the themes folder (`nord`, `one-dark`, `tokyo-night`, `catppuccin-mocha`, `catppuccin-frappe`, `gruvbox-dark`, `solarized-light`). `themes` is that folder: relative to `config.toml`, or absolute.
 
