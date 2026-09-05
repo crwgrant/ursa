@@ -12,6 +12,9 @@ pub struct EncodedKey {
 }
 
 pub fn encode_keystroke(keystroke: &Keystroke) -> Option<EncodedKey> {
+    if let Some(raw) = tab_bytes(keystroke) {
+        return Some(raw);
+    }
     if let Some(raw) = macos_line_editing(keystroke) {
         return Some(raw);
     }
@@ -44,6 +47,21 @@ pub fn encode_keystroke(keystroke: &Keystroke) -> Option<EncodedKey> {
         utf8,
         unshifted,
         raw: None,
+    })
+}
+
+fn tab_bytes(keystroke: &Keystroke) -> Option<EncodedKey> {
+    if keystroke.key != "tab" || keystroke.modifiers.platform || keystroke.modifiers.control || keystroke.modifiers.alt {
+        return None;
+    }
+    let bytes: &[u8] = if keystroke.modifiers.shift { b"\x1b[Z" } else { b"\t" };
+    Some(EncodedKey {
+        key: Key::Tab,
+        mods: key::Mods::empty(),
+        consumed: key::Mods::empty(),
+        utf8: None,
+        unshifted: '\0',
+        raw: Some(bytes.to_vec()),
     })
 }
 
@@ -224,4 +242,33 @@ fn map_key(name: &str) -> Option<(Key, char, bool)> {
         _ => return None,
     };
     Some(mapped)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::encode_keystroke;
+    use gpui::{Keystroke, Modifiers};
+
+    fn key(name: &str, modifiers: Modifiers) -> Keystroke {
+        Keystroke {
+            modifiers,
+            key: name.into(),
+            key_char: None,
+        }
+    }
+
+    #[test]
+    fn tab_writes_a_literal_tab() {
+        let encoded = encode_keystroke(&key("tab", Modifiers::default())).unwrap();
+        assert_eq!(encoded.raw.as_deref(), Some(b"\t".as_slice()));
+        let encoded = encode_keystroke(&key(
+            "tab",
+            Modifiers {
+                shift: true,
+                ..Modifiers::default()
+            },
+        ))
+        .unwrap();
+        assert_eq!(encoded.raw.as_deref(), Some(b"\x1b[Z".as_slice()));
+    }
 }

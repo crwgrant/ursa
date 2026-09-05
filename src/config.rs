@@ -7,7 +7,7 @@ use std::{
 use gpui::{App, Bounds, DisplayId, Global, Pixels, SharedString, Timer, WindowBounds, point, px, size};
 use serde::Deserialize;
 
-use crate::{notify, pty, theme};
+use crate::{notify, panes::PaneSpec, pty, theme};
 
 pub const DEFAULT_SCROLLBACK: u32 = 2000;
 pub const FONT_SIZE_MIN: f32 = 8.0;
@@ -65,6 +65,8 @@ pub struct WindowFrame {
     pub active_session: usize,
     pub active_tabs: Vec<usize>,
     pub tab_cwds: Vec<String>,
+    pub tab_panes: Vec<String>,
+    pub tab_focus: Vec<usize>,
 }
 
 impl WindowFrame {
@@ -116,6 +118,14 @@ impl WindowFrame {
                 .map(|frame| frame.tab_cwds.clone())
                 .or_else(|| pending_workspace_layout().map(|layout| layout.tab_cwd_strings()))
                 .unwrap_or_default(),
+            tab_panes: last
+                .map(|frame| frame.tab_panes.clone())
+                .or_else(|| pending_workspace_layout().map(|layout| layout.tab_pane_strings()))
+                .unwrap_or_default(),
+            tab_focus: last
+                .map(|frame| frame.tab_focus.clone())
+                .or_else(|| pending_workspace_layout().map(|layout| layout.tab_focus()))
+                .unwrap_or_default(),
         }
         .sanitized()
     }
@@ -159,17 +169,27 @@ impl WindowFrame {
             active_session: self.active_session,
             active_tabs: self.active_tabs,
             tab_cwds: self.tab_cwds,
+            tab_panes: self.tab_panes,
+            tab_focus: self.tab_focus,
         })
         .map(|frame| frame.with_sanitized_layout())
     }
 
     fn with_sanitized_layout(mut self) -> Self {
-        let layout =
-            WorkspaceLayout::from_parts(self.session_tabs, self.active_session, self.active_tabs, parse_tab_cwds(self.tab_cwds));
+        let layout = WorkspaceLayout::from_parts(
+            self.session_tabs,
+            self.active_session,
+            self.active_tabs,
+            parse_tab_cwds(self.tab_cwds),
+            parse_tab_panes(self.tab_panes),
+            self.tab_focus,
+        );
         self.session_tabs = layout.session_tabs();
         self.active_session = layout.active_session;
         self.active_tabs = layout.active_tabs();
         self.tab_cwds = layout.tab_cwd_strings();
+        self.tab_panes = layout.tab_pane_strings();
+        self.tab_focus = layout.tab_focus();
         self
     }
 
@@ -186,7 +206,8 @@ impl WindowFrame {
 # `state` is windowed, maximized, or fullscreen. x/y/width/height are the restored windowed frame.
 # `sidebar_width` is the sessions list width in pixels.
 # `session_tabs` is the tab count per sidebar session; `active_tabs` is the selected tab in each.
-# `tab_cwds` is the last working directory of each tab, session-major then tab order.
+# `tab_cwds` is the last working directory of each pane leaf, session-major then tab then pane order.
+# `tab_panes` encodes each tab’s split tree (`leaf` or `h:0.5:leaf:leaf` / `v:…`). `tab_focus` is the focused leaf.
 x = {x}
 y = {y}
 width = {width}
@@ -210,27 +231,51 @@ state = {state}
         if self.session_tabs.is_empty() {
             return String::new();
         }
-        format!(
+        let mut out = format!(
             "session_tabs = {tabs}\nactive_session = {active}\nactive_tabs = {actives}\ntab_cwds = {cwds}\n",
             tabs = toml_usize_array(&self.session_tabs),
             active = self.active_session,
             actives = toml_usize_array(&self.active_tabs),
             cwds = toml_string_array(&self.tab_cwds),
-        )
+        );
+        if self.tab_panes.iter().any(|spec| spec != "leaf") {
+            out.push_str(&format!("tab_panes = {}\n", toml_string_array(&self.tab_panes)));
+        }
+        if self.tab_focus.iter().any(|&focus| focus != 0) {
+            out.push_str(&format!("tab_focus = {}\n", toml_usize_array(&self.tab_focus)));
+        }
+        out
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct WorkspaceLayout {
     pub sessions: Vec<SessionLayout>,
     pub active_session: usize,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SessionLayout {
     pub tabs: usize,
     pub active: usize,
+    pub tab_specs: Vec<TabLayout>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TabLayout {
+    pub spec: PaneSpec,
+    pub focused: usize,
     pub cwds: Vec<Option<PathBuf>>,
+}
+
+impl Default for TabLayout {
+    fn default() -> Self {
+        Self {
+            spec: PaneSpec::Leaf,
+            focused: 0,
+            cwds: vec![None],
+        }
+    }
 }
 
 impl Default for WorkspaceLayout {
@@ -239,7 +284,7 @@ impl Default for WorkspaceLayout {
             sessions: vec![SessionLayout {
                 tabs: 1,
                 active: 0,
-                cwds: vec![None],
+                tab_specs: vec![TabLayout::default()],
             }],
             active_session: 0,
         }
@@ -247,12 +292,23 @@ impl Default for WorkspaceLayout {
 }
 
 impl WorkspaceLayout {
-    pub fn from_workspace(sessions: &[(usize, usize, Vec<Option<PathBuf>>)], active_session: usize) -> Self {
+    pub fn from_sessions(sessions: Vec<SessionLayout>, active_session: usize) -> Self {
         Self::from_parts(
-            sessions.iter().map(|(tabs, _, _)| *tabs).collect(),
+            sessions.iter().map(|session| session.tabs).collect(),
             active_session,
-            sessions.iter().map(|(_, active, _)| *active).collect(),
-            sessions.iter().flat_map(|(_, _, cwds)| cwds.clone()).collect(),
+            sessions.iter().map(|session| session.active).collect(),
+            sessions
+                .iter()
+                .flat_map(|session| session.tab_specs.iter().flat_map(|tab| tab.cwds.clone()))
+                .collect(),
+            sessions
+                .iter()
+                .flat_map(|session| session.tab_specs.iter().map(|tab| tab.spec.clone()))
+                .collect(),
+            sessions
+                .iter()
+                .flat_map(|session| session.tab_specs.iter().map(|tab| tab.focused))
+                .collect(),
         )
     }
 
@@ -261,16 +317,28 @@ impl WorkspaceLayout {
         active_session: usize,
         active_tabs: Vec<usize>,
         tab_cwds: Vec<Option<PathBuf>>,
+        tab_panes: Vec<PaneSpec>,
+        tab_focus: Vec<usize>,
     ) -> Self {
         let mut cwd_iter = tab_cwds.into_iter();
+        let mut pane_iter = tab_panes.into_iter();
+        let mut focus_iter = tab_focus.into_iter();
         let mut sessions = Vec::new();
         for (index, tabs) in session_tabs.into_iter().take(WORKSPACE_MAX_SESSIONS).enumerate() {
             let tabs = tabs.clamp(1, WORKSPACE_MAX_TABS);
             let active = active_tabs.get(index).copied().unwrap_or(0).min(tabs.saturating_sub(1));
-            let cwds = (0..tabs)
-                .map(|_| cwd_iter.next().flatten().filter(|path| !path.as_os_str().is_empty()))
+            let tab_specs = (0..tabs)
+                .map(|_| {
+                    let spec = pane_iter.next().unwrap_or(PaneSpec::Leaf);
+                    let leaves = spec.leaf_count().clamp(1, crate::panes::MAX_PANES);
+                    let cwds = (0..leaves)
+                        .map(|_| cwd_iter.next().flatten().filter(|path| !path.as_os_str().is_empty()))
+                        .collect::<Vec<_>>();
+                    let focused = focus_iter.next().unwrap_or(0).min(leaves.saturating_sub(1));
+                    TabLayout { spec, focused, cwds }
+                })
                 .collect();
-            sessions.push(SessionLayout { tabs, active, cwds });
+            sessions.push(SessionLayout { tabs, active, tab_specs });
         }
         if sessions.is_empty() {
             return Self::default();
@@ -294,17 +362,43 @@ impl WorkspaceLayout {
         self.sessions
             .iter()
             .flat_map(|session| {
-                session.cwds.iter().map(|cwd| {
-                    cwd.as_ref()
-                        .map(|path| path.to_string_lossy().into_owned())
-                        .unwrap_or_default()
+                session.tab_specs.iter().flat_map(|tab| {
+                    tab.cwds.iter().map(|cwd| {
+                        cwd.as_ref()
+                            .map(|path| path.to_string_lossy().into_owned())
+                            .unwrap_or_default()
+                    })
                 })
             })
             .collect()
     }
 
     fn tab_cwd_paths(&self) -> Vec<Option<PathBuf>> {
-        self.sessions.iter().flat_map(|session| session.cwds.clone()).collect()
+        self.sessions
+            .iter()
+            .flat_map(|session| session.tab_specs.iter().flat_map(|tab| tab.cwds.clone()))
+            .collect()
+    }
+
+    fn tab_pane_strings(&self) -> Vec<String> {
+        self.sessions
+            .iter()
+            .flat_map(|session| session.tab_specs.iter().map(|tab| tab.spec.render()))
+            .collect()
+    }
+
+    fn tab_pane_specs(&self) -> Vec<PaneSpec> {
+        self.sessions
+            .iter()
+            .flat_map(|session| session.tab_specs.iter().map(|tab| tab.spec.clone()))
+            .collect()
+    }
+
+    fn tab_focus(&self) -> Vec<usize> {
+        self.sessions
+            .iter()
+            .flat_map(|session| session.tab_specs.iter().map(|tab| tab.focused))
+            .collect()
     }
 
     pub fn into_single_session(self) -> Self {
@@ -316,7 +410,7 @@ impl WorkspaceLayout {
             .unwrap_or_else(|| SessionLayout {
                 tabs: 1,
                 active: 0,
-                cwds: vec![None],
+                tab_specs: vec![TabLayout::default()],
             });
         Self {
             sessions: vec![session],
@@ -874,6 +968,8 @@ pub fn restored_workspace_layout(cx: &App) -> WorkspaceLayout {
                     frame.active_session,
                     frame.active_tabs,
                     parse_tab_cwds(frame.tab_cwds),
+                    parse_tab_panes(frame.tab_panes),
+                    frame.tab_focus,
                 )
             })
         })
@@ -881,8 +977,14 @@ pub fn restored_workspace_layout(cx: &App) -> WorkspaceLayout {
 }
 
 pub fn save_workspace_layout(layout: WorkspaceLayout) {
-    let layout =
-        WorkspaceLayout::from_parts(layout.session_tabs(), layout.active_session, layout.active_tabs(), layout.tab_cwd_paths());
+    let layout = WorkspaceLayout::from_parts(
+        layout.session_tabs(),
+        layout.active_session,
+        layout.active_tabs(),
+        layout.tab_cwd_paths(),
+        layout.tab_pane_specs(),
+        layout.tab_focus(),
+    );
     if let Ok(mut last) = LAST_WORKSPACE_LAYOUT.lock() {
         if last.as_ref() == Some(&layout) {
             write_workspace_layout_to_frame(&layout);
@@ -905,10 +1007,14 @@ fn write_workspace_layout_to_frame(layout: &WorkspaceLayout) {
     let session_tabs = layout.session_tabs();
     let active_tabs = layout.active_tabs();
     let tab_cwds = layout.tab_cwd_strings();
+    let tab_panes = layout.tab_pane_strings();
+    let tab_focus = layout.tab_focus();
     if frame.session_tabs == session_tabs
         && frame.active_session == layout.active_session
         && frame.active_tabs == active_tabs
         && frame.tab_cwds == tab_cwds
+        && frame.tab_panes == tab_panes
+        && frame.tab_focus == tab_focus
     {
         return;
     }
@@ -916,6 +1022,8 @@ fn write_workspace_layout_to_frame(layout: &WorkspaceLayout) {
     frame.active_session = layout.active_session;
     frame.active_tabs = active_tabs;
     frame.tab_cwds = tab_cwds;
+    frame.tab_panes = tab_panes;
+    frame.tab_focus = tab_focus;
     if let Ok(mut last) = LAST_WINDOW_FRAME.lock() {
         *last = Some(frame.clone());
     }
@@ -1019,6 +1127,8 @@ fn parse_window_frame(text: &str) -> Option<WindowFrame> {
         active_session: file.active_session.unwrap_or(0),
         active_tabs: file.active_tabs.unwrap_or_default(),
         tab_cwds: file.tab_cwds.unwrap_or_default(),
+        tab_panes: file.tab_panes.unwrap_or_default(),
+        tab_focus: file.tab_focus.unwrap_or_default(),
     }
     .sanitized()
 }
@@ -1085,6 +1195,12 @@ struct WindowFile {
     active_session: Option<usize>,
     active_tabs: Option<Vec<usize>>,
     tab_cwds: Option<Vec<String>>,
+    tab_panes: Option<Vec<String>>,
+    tab_focus: Option<Vec<usize>>,
+}
+
+fn parse_tab_panes(values: impl IntoIterator<Item = impl AsRef<str>>) -> Vec<PaneSpec> {
+    values.into_iter().map(|value| PaneSpec::parse(value.as_ref())).collect()
 }
 
 fn parse_tab_cwds(values: impl IntoIterator<Item = impl AsRef<str>>) -> Vec<Option<PathBuf>> {
@@ -1101,8 +1217,14 @@ fn parse_tab_cwds(values: impl IntoIterator<Item = impl AsRef<str>>) -> Vec<Opti
         .collect()
 }
 
-pub fn read_tab_snapshot(session: usize, tab: usize) -> Option<Vec<u8>> {
-    let bytes = std::fs::read(tab_snapshot_path(session, tab)).ok()?;
+pub fn read_pane_snapshot(session: usize, tab: usize, pane: usize) -> Option<Vec<u8>> {
+    let bytes = std::fs::read(pane_snapshot_path(session, tab, pane)).ok().or_else(|| {
+        if pane == 0 {
+            std::fs::read(legacy_tab_snapshot_path(session, tab)).ok()
+        } else {
+            None
+        }
+    })?;
     if bytes.is_empty() || bytes.len() > TAB_SNAPSHOT_MAX_BYTES {
         return None;
     }
@@ -1119,8 +1241,12 @@ pub fn write_tab_snapshot(path: &Path, bytes: &[u8]) {
     let _ = std::fs::write(path, bytes);
 }
 
-pub fn tab_snapshot_path(session: usize, tab: usize) -> PathBuf {
+fn legacy_tab_snapshot_path(session: usize, tab: usize) -> PathBuf {
     state_dir().join(format!("s{session}-t{tab}.snp"))
+}
+
+pub fn pane_snapshot_path(session: usize, tab: usize, pane: usize) -> PathBuf {
+    state_dir().join(format!("s{session}-t{tab}-p{pane}.snp"))
 }
 
 pub fn clear_tab_snapshots() {
@@ -1132,7 +1258,18 @@ pub fn prune_tab_snapshots(layout: &WorkspaceLayout) {
         .sessions
         .iter()
         .enumerate()
-        .flat_map(|(session, spec)| (0..spec.tabs).map(move |tab| format!("s{session}-t{tab}.snp")))
+        .flat_map(|(session, spec)| {
+            spec.tab_specs.iter().enumerate().flat_map(move |(tab, tab_spec)| {
+                let leaves = tab_spec.spec.leaf_count().max(1);
+                (0..leaves).flat_map(move |pane| {
+                    let mut names = vec![format!("s{session}-t{tab}-p{pane}.snp")];
+                    if pane == 0 {
+                        names.push(format!("s{session}-t{tab}.snp"));
+                    }
+                    names
+                })
+            })
+        })
         .collect::<std::collections::HashSet<_>>();
     prune_snapshot_files(&keep);
 }
@@ -1588,11 +1725,11 @@ mod tests {
         assert_eq!(again.session_tabs, vec![2, 3]);
         assert_eq!(again.active_session, 1);
         assert_eq!(again.active_tabs, vec![1, 2]);
-        let layout = WorkspaceLayout::from_parts(vec![0, 99], 8, vec![4], Vec::new());
+        let layout = WorkspaceLayout::from_parts(vec![0, 99], 8, vec![4], Vec::new(), Vec::new(), Vec::new());
         assert_eq!(layout.sessions.len(), 2);
         assert_eq!(layout.sessions[0].tabs, 1);
         assert_eq!(layout.sessions[0].active, 0);
-        assert_eq!(layout.sessions[0].cwds, vec![None]);
+        assert_eq!(layout.sessions[0].tab_specs[0].cwds, vec![None]);
         assert_eq!(layout.sessions[1].tabs, WORKSPACE_MAX_TABS);
         assert_eq!(layout.active_session, 1);
         let single = layout.into_single_session();
@@ -1610,12 +1747,43 @@ mod tests {
         assert_eq!(parsed.tab_cwds, vec!["/tmp/a".to_string(), "/tmp/b".to_string(), String::new()]);
         let again = parse_window_frame(&parsed.render()).unwrap();
         assert_eq!(again.tab_cwds, parsed.tab_cwds);
-        let layout = WorkspaceLayout::from_parts(vec![2, 1], 0, vec![1, 0], parse_tab_cwds(["/tmp/a", "/tmp/b", ""]));
-        assert_eq!(
-            layout.sessions[0].cwds,
-            vec![Some(PathBuf::from("/tmp/a")), Some(PathBuf::from("/tmp/b"))]
+        let layout = WorkspaceLayout::from_parts(
+            vec![2, 1],
+            0,
+            vec![1, 0],
+            parse_tab_cwds(["/tmp/a", "/tmp/b", ""]),
+            Vec::new(),
+            Vec::new(),
         );
-        assert_eq!(layout.sessions[1].cwds, vec![None]);
+        assert_eq!(layout.sessions[0].tab_specs[0].cwds, vec![Some(PathBuf::from("/tmp/a"))]);
+        assert_eq!(layout.sessions[0].tab_specs[1].cwds, vec![Some(PathBuf::from("/tmp/b"))]);
+        assert_eq!(layout.sessions[1].tab_specs[0].cwds, vec![None]);
+    }
+
+    #[test]
+    fn window_frame_round_trips_pane_trees() {
+        let parsed = parse_window_frame(
+            "x = 10\ny = 20\nwidth = 800\nheight = 500\nsession_tabs = [1]\nactive_session = 0\nactive_tabs = [0]\ntab_cwds = [\"/tmp/a\", \"/tmp/b\"]\ntab_panes = [\"h:0.4:leaf:leaf\"]\ntab_focus = [1]\n",
+        )
+        .unwrap();
+        assert_eq!(parsed.tab_panes, vec!["h:0.4:leaf:leaf".to_string()]);
+        assert_eq!(parsed.tab_focus, vec![1]);
+        assert_eq!(parsed.tab_cwds, vec!["/tmp/a".to_string(), "/tmp/b".to_string()]);
+        let again = parse_window_frame(&parsed.render()).unwrap();
+        assert_eq!(again.tab_panes, parsed.tab_panes);
+        assert_eq!(again.tab_focus, parsed.tab_focus);
+        assert_eq!(again.tab_cwds, parsed.tab_cwds);
+        let layout = WorkspaceLayout::from_parts(
+            vec![1],
+            0,
+            vec![0],
+            parse_tab_cwds(["/tmp/a", "/tmp/b"]),
+            parse_tab_panes(["h:0.4:leaf:leaf"]),
+            vec![1],
+        );
+        assert_eq!(layout.sessions[0].tab_specs[0].cwds.len(), 2);
+        assert_eq!(layout.sessions[0].tab_specs[0].focused, 1);
+        assert_eq!(layout.sessions[0].tab_specs[0].spec.leaf_count(), 2);
     }
 
     #[test]
