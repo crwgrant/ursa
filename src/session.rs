@@ -73,6 +73,7 @@ enum Event {
 
 pub enum SessionEvent {
     Exited,
+    TitleChanged,
 }
 
 pub struct Session {
@@ -146,7 +147,10 @@ impl Session {
                                 this.frame = frame;
                                 this.recompute_hovered_link();
                             }
-                            Event::Title(title) if !title.is_empty() => this.title = title,
+                            Event::Title(title) if !title.is_empty() => {
+                                this.title = title;
+                                cx.emit(SessionEvent::TitleChanged);
+                            }
                             Event::Title(_) => {}
                             Event::Exited => cx.emit(SessionEvent::Exited),
                         }
@@ -583,13 +587,17 @@ pub fn clipboard_has_text(cx: &App) -> bool {
 }
 
 fn reserved_shortcut(modifiers: &gpui::Modifiers, key: &str) -> bool {
-    if modifiers.platform && matches!(key, "q" | "t" | "w" | "n" | "c" | "v" | "k" | ",") {
+    let digit = matches!(key, "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9");
+    if modifiers.platform && (matches!(key, "q" | "t" | "w" | "n" | "c" | "v" | "k" | ",") || digit) {
         return true;
     }
-    if modifiers.control && modifiers.shift && matches!(key, "t" | "w" | "c" | "v") {
+    if modifiers.control && modifiers.shift && (matches!(key, "t" | "w" | "c" | "v") || digit) {
         return true;
     }
-    modifiers.control && matches!(key, ",")
+    if modifiers.control && modifiers.alt && matches!(key, "t" | "w") {
+        return true;
+    }
+    modifiers.control && (digit || key == ",")
 }
 
 fn empty_frame(colors: theme::Colors) -> Frame {

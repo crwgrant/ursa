@@ -10,22 +10,74 @@ mod settings;
 mod theme;
 
 use gpui::{
-    AnyElement, AnyView, App, Application, Bounds, Context, CursorStyle, DragMoveEvent, KeyBinding, Menu, MenuItem, MouseButton,
-    MouseDownEvent, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, point, prelude::*, px, rgb,
-    size,
+    Action, AnyElement, AnyView, App, Application, Bounds, Context, CursorStyle, DragMoveEvent, KeyBinding, Menu, MenuItem,
+    MouseButton, MouseDownEvent, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, point,
+    prelude::*, px, rgb, size,
 };
 use session::{Session, SessionEvent};
 
-actions!(ghostterm, [Quit, NewWindow, NewTab, CloseTab, Copy, Paste, ClearScreen, OpenSettings]);
+actions!(
+    ghostterm,
+    [
+        Quit,
+        NewWindow,
+        NewSession,
+        NewTab,
+        CloseTab,
+        CloseSession,
+        Copy,
+        Paste,
+        ClearScreen,
+        OpenSettings
+    ]
+);
+
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = ghostterm, no_json)]
+struct ActivateTab {
+    index: usize,
+}
+
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = ghostterm, no_json)]
+struct ActivateSession {
+    index: usize,
+}
 
 pub(crate) const APP_ID: &str = "com.crwgrant.ghostterm";
 const WINDOW_WIDTH: f32 = 1100.0;
 const WINDOW_HEIGHT: f32 = 720.0;
 const NEW_WINDOW_OFFSET: f32 = 28.0;
 
-struct Workspace {
+struct SessionGroup {
     tabs: Vec<gpui::Entity<Session>>,
     active: usize,
+}
+
+impl SessionGroup {
+    fn spawn(window: &mut Window, cx: &mut Context<Workspace>) -> Self {
+        let tab = cx.new(|cx| Session::spawn(0, window, cx));
+        Self {
+            tabs: vec![tab],
+            active: 0,
+        }
+    }
+
+    fn title(&self, cx: &App) -> SharedString {
+        self.tabs
+            .get(self.active)
+            .map(|tab| SharedString::from(tab.read(cx).title.clone()))
+            .unwrap_or_else(|| SharedString::from("Session"))
+    }
+
+    fn active_tab(&self) -> Option<&gpui::Entity<Session>> {
+        self.tabs.get(self.active)
+    }
+}
+
+struct Workspace {
+    sessions: Vec<SessionGroup>,
+    active_session: usize,
     sidebar_width: f32,
     sidebar_split_locked: bool,
     dragging_tab: Option<usize>,
@@ -77,16 +129,16 @@ impl Render for SplitDragPreview {
 
 impl Workspace {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let first = cx.new(|cx| Session::spawn(0, window, cx));
+        let first = SessionGroup::spawn(window, cx);
         let workspace = Self {
-            tabs: vec![first],
-            active: 0,
+            sessions: vec![first],
+            active_session: 0,
             sidebar_width: config::restored_sidebar_width(),
             sidebar_split_locked: false,
             dragging_tab: None,
             tab_insert_at: None,
         };
-        workspace.subscribe_session(0, window, cx);
+        workspace.subscribe_group(0, window, cx);
         cx.observe_global::<notify::Notifications>(|_, cx| cx.notify()).detach();
         cx.observe_global::<config::AppSettings>(|this, cx| {
             this.apply_config(cx);
@@ -106,92 +158,158 @@ impl Workspace {
         workspace
     }
 
-    fn subscribe_session(&self, index: usize, window: &Window, cx: &mut Context<Self>) {
-        let Some(tab) = self.tabs.get(index).cloned() else {
+    fn subscribe_group(&self, session: usize, window: &Window, cx: &mut Context<Self>) {
+        let Some(group) = self.sessions.get(session) else {
             return;
         };
-        cx.subscribe_in(&tab, window, |this, session, event: &SessionEvent, window, cx| {
-            if matches!(event, SessionEvent::Exited) {
-                if let Some(index) = this.tabs.iter().position(|tab| tab == session) {
-                    this.close_tab(index, window, cx);
-                }
-            }
+        for tab in &group.tabs {
+            self.subscribe_terminal(tab, window, cx);
+        }
+    }
+
+    fn subscribe_terminal(&self, tab: &gpui::Entity<Session>, window: &Window, cx: &mut Context<Self>) {
+        cx.subscribe_in(tab, window, |this, session, event: &SessionEvent, window, cx| match event {
+            SessionEvent::Exited => this.close_terminal(session, window, cx),
+            SessionEvent::TitleChanged => cx.notify(),
         })
         .detach();
     }
 
-    fn add_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let index = self.tabs.len();
-        let tab = cx.new(|cx| Session::spawn(index, window, cx));
-        self.tabs.push(tab);
-        self.active = index;
-        self.subscribe_session(index, window, cx);
+    fn active_tab(&self) -> Option<&gpui::Entity<Session>> {
+        self.sessions.get(self.active_session).and_then(SessionGroup::active_tab)
+    }
+
+    fn add_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let index = self.sessions.len();
+        let group = SessionGroup::spawn(window, cx);
+        self.sessions.push(group);
+        self.active_session = index;
+        self.subscribe_group(index, window, cx);
         self.focus_active(window, cx);
         cx.notify();
     }
 
-    fn select_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if index < self.tabs.len() {
-            self.active = index;
+    fn add_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(group) = self.sessions.get_mut(self.active_session) else {
+            return;
+        };
+        let index = group.tabs.len();
+        let tab = cx.new(|cx| Session::spawn(index, window, cx));
+        group.tabs.push(tab.clone());
+        group.active = index;
+        self.subscribe_terminal(&tab, window, cx);
+        self.focus_active(window, cx);
+        cx.notify();
+    }
+
+    fn select_session(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if index < self.sessions.len() {
+            self.active_session = index;
             self.focus_active(window, cx);
             cx.notify();
         }
     }
 
-    fn close_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if index >= self.tabs.len() {
+    fn select_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(group) = self.sessions.get_mut(self.active_session) {
+            if index < group.tabs.len() {
+                group.active = index;
+                self.focus_active(window, cx);
+                cx.notify();
+            }
+        }
+    }
+
+    fn close_terminal(&mut self, session: &gpui::Entity<Session>, window: &mut Window, cx: &mut Context<Self>) {
+        for (session_index, group) in self.sessions.iter().enumerate() {
+            if let Some(tab_index) = group.tabs.iter().position(|tab| tab == session) {
+                self.close_pane_tab(session_index, tab_index, window, cx);
+                return;
+            }
+        }
+    }
+
+    fn close_pane_tab(&mut self, session_index: usize, tab_index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(group) = self.sessions.get_mut(session_index) else {
+            return;
+        };
+        if group.tabs.len() == 1 {
+            self.close_session(session_index, window, cx);
             return;
         }
-        if self.tabs.len() == 1 {
+        group.tabs.remove(tab_index);
+        if group.active == tab_index {
+            group.active = tab_index.saturating_sub(1);
+        } else if group.active > tab_index {
+            group.active -= 1;
+        }
+        self.focus_active(window, cx);
+        cx.notify();
+    }
+
+    fn close_session(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if index >= self.sessions.len() {
+            return;
+        }
+        if self.sessions.len() == 1 {
             window.remove_window();
             return;
         }
-
-        self.tabs.remove(index);
-        if self.active == index {
-            self.active = index.saturating_sub(1);
-        } else if self.active > index {
-            self.active -= 1;
+        self.sessions.remove(index);
+        if self.active_session == index {
+            self.active_session = index.saturating_sub(1);
+        } else if self.active_session > index {
+            self.active_session -= 1;
         }
         self.focus_active(window, cx);
         cx.notify();
     }
 
     fn close_active_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.close_tab(self.active, window, cx);
+        let session = self.active_session;
+        let Some(tab) = self.sessions.get(session).map(|group| group.active) else {
+            return;
+        };
+        self.close_pane_tab(session, tab, window, cx);
+    }
+
+    fn close_active_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_session(self.active_session, window, cx);
     }
 
     fn focus_active(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(tab) = self.tabs.get(self.active) {
+        if let Some(tab) = self.active_tab() {
             tab.update(cx, |session, _cx| session.focus(window));
         }
     }
 
     fn can_copy(&self, cx: &App) -> bool {
-        self.tabs.get(self.active).is_some_and(|tab| tab.read(cx).has_selection())
+        self.active_tab().is_some_and(|tab| tab.read(cx).has_selection())
     }
 
     fn copy_active(&self, cx: &mut Context<Self>) {
-        if let Some(tab) = self.tabs.get(self.active) {
+        if let Some(tab) = self.active_tab() {
             tab.update(cx, |session, cx| session.copy_selection(cx));
         }
     }
 
     fn paste_active(&self, cx: &mut Context<Self>) {
-        if let Some(tab) = self.tabs.get(self.active) {
+        if let Some(tab) = self.active_tab() {
             tab.update(cx, |session, cx| session.paste_clipboard(cx));
         }
     }
 
     fn clear_active(&self, cx: &mut Context<Self>) {
-        if let Some(tab) = self.tabs.get(self.active) {
+        if let Some(tab) = self.active_tab() {
             tab.update(cx, |session, _cx| session.clear_screen());
         }
     }
 
     fn apply_config(&self, cx: &mut Context<Self>) {
-        for tab in &self.tabs {
-            tab.update(cx, |session, cx| session.apply_config(cx));
+        for group in &self.sessions {
+            for tab in &group.tabs {
+                tab.update(cx, |session, cx| session.apply_config(cx));
+            }
         }
     }
 
@@ -238,12 +356,12 @@ impl Workspace {
     }
 
     fn reorder_tab(&mut self, from: usize, insert_at: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(dest) = tab_destination(from, insert_at, self.tabs.len()) else {
+        let Some(dest) = tab_destination(from, insert_at, self.sessions.len()) else {
             return;
         };
-        let tab = self.tabs.remove(from);
-        self.tabs.insert(dest, tab);
-        self.active = active_after_reorder(self.active, from, dest);
+        let session = self.sessions.remove(from);
+        self.sessions.insert(dest, session);
+        self.active_session = active_after_reorder(self.active_session, from, dest);
         self.focus_active(window, cx);
         cx.notify();
     }
@@ -277,15 +395,12 @@ impl Render for Workspace {
             self.dragging_tab = None;
             self.tab_insert_at = None;
         }
-        let active = self.active;
+        let active = self.active_session;
         let tabs: Vec<(usize, SharedString, bool)> = self
-            .tabs
+            .sessions
             .iter()
             .enumerate()
-            .map(|(index, tab)| {
-                let title = tab.read(cx).title.clone();
-                (index, SharedString::from(title), index == active)
-            })
+            .map(|(index, group)| (index, group.title(cx), index == active))
             .collect();
 
         let colors = theme::colors(cx);
@@ -296,8 +411,12 @@ impl Render for Workspace {
             .bg(rgb(colors.window))
             .text_color(rgb(colors.text))
             .font_family(theme::UI_FONT_FAMILY)
+            .on_action(cx.listener(|this, _: &NewSession, window, cx| this.add_session(window, cx)))
             .on_action(cx.listener(|this, _: &NewTab, window, cx| this.add_tab(window, cx)))
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| this.close_active_tab(window, cx)))
+            .on_action(cx.listener(|this, _: &CloseSession, window, cx| this.close_active_session(window, cx)))
+            .on_action(cx.listener(|this, action: &ActivateTab, window, cx| this.select_tab(action.index, window, cx)))
+            .on_action(cx.listener(|this, action: &ActivateSession, window, cx| this.select_session(action.index, window, cx)))
             .when(self.can_copy(cx), |el| {
                 el.on_action(cx.listener(|this, _: &Copy, _window, cx| this.copy_active(cx)))
             })
@@ -308,7 +427,7 @@ impl Render for Workspace {
             .on_action(|_: &OpenSettings, _window, cx| crate::settings::open(cx))
             .child(self.render_sidebar(&tabs, cx))
             .child(self.render_split(cx))
-            .child(self.render_terminal())
+            .child(self.render_terminal(cx))
             .child(notify::overlay(cx))
     }
 }
@@ -391,8 +510,49 @@ impl Workspace {
             })
     }
 
-    fn render_terminal(&self) -> impl IntoElement {
-        div().flex_1().h_full().min_w_0().child(self.tabs[self.active].clone())
+    fn render_terminal(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(group) = self.sessions.get(self.active_session) else {
+            return div().flex_1().h_full().min_w_0();
+        };
+        let tabs: Vec<(usize, SharedString, bool)> = group
+            .tabs
+            .iter()
+            .enumerate()
+            .map(|(index, tab)| (index, SharedString::from(tab.read(cx).title.clone()), index == group.active))
+            .collect();
+        let terminal = group.active_tab().cloned();
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .h_full()
+            .min_w_0()
+            .child(self.render_pane_tabs(&tabs, cx))
+            .when_some(terminal, |pane, tab| pane.child(div().flex_1().min_h_0().min_w_0().child(tab)))
+    }
+
+    fn render_pane_tabs(&self, tabs: &[(usize, SharedString, bool)], cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = theme::colors(cx);
+        div()
+            .id("pane-tabs")
+            .flex()
+            .items_end()
+            .h(px(36.0))
+            .flex_shrink_0()
+            .bg(rgb(colors.window))
+            .overflow_x_scroll()
+            .children(tabs.iter().enumerate().map(|(position, (index, title, selected))| {
+                pane_tab(*index, title.clone(), *selected, position + 1 < tabs.len(), cx)
+            }))
+            .child(new_pane_tab_button(cx))
+            .child(
+                div()
+                    .flex_1()
+                    .h_full()
+                    .bg(rgb(colors.window))
+                    .border_b_1()
+                    .border_color(rgb(colors.sidebar_border)),
+            )
     }
 
     fn render_split(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -499,9 +659,115 @@ fn new_tab_button(cx: &mut Context<Workspace>) -> impl IntoElement {
         .text_sm()
         .cursor_pointer()
         .hover(move |style| style.bg(rgb(colors.tab_hover)))
+        .tooltip(action_tooltip("New Session", new_session_shortcut()))
+        .child("+")
+        .on_mouse_down(MouseButton::Left, cx.listener(|this, _event, window, cx| this.add_session(window, cx)))
+}
+
+fn new_pane_tab_button(cx: &mut Context<Workspace>) -> impl IntoElement {
+    let colors = theme::colors(cx);
+    div()
+        .id("new-pane-tab")
+        .h_full()
+        .px_2()
+        .flex()
+        .items_center()
+        .justify_center()
+        .border_b_1()
+        .border_color(rgb(colors.sidebar_border))
+        .text_sm()
+        .text_color(rgb(colors.text_dim))
+        .cursor_pointer()
+        .hover(move |style| style.bg(rgb(colors.tab_hover)).text_color(rgb(colors.text)))
         .tooltip(action_tooltip("New Tab", new_tab_shortcut()))
         .child("+")
         .on_mouse_down(MouseButton::Left, cx.listener(|this, _event, window, cx| this.add_tab(window, cx)))
+}
+
+fn pane_tab(
+    index: usize,
+    title: SharedString,
+    selected: bool,
+    show_divider: bool,
+    cx: &mut Context<Workspace>,
+) -> impl IntoElement {
+    let colors = theme::colors(cx);
+    let background = if selected { colors.term_bg } else { colors.window };
+    let accent = colors.accent;
+    let text = if selected { colors.text } else { colors.text_dim };
+    div()
+        .id(("pane-tab", index))
+        .relative()
+        .h_full()
+        .px_3()
+        .flex()
+        .items_center()
+        .gap_2()
+        .min_w(px(140.0))
+        .max_w(px(220.0))
+        .bg(rgb(background))
+        .cursor_pointer()
+        .when(!selected, |tab| tab.border_b_1().border_color(rgb(colors.sidebar_border)))
+        .when(show_divider && !selected, |tab| tab.border_r_1().border_color(rgb(colors.sidebar_border)))
+        .hover(move |style| if selected { style } else { style.bg(rgb(colors.tab_hover)) })
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _event, window, cx| this.select_tab(index, window, cx)),
+        )
+        .child(
+            div()
+                .w(px(14.0))
+                .h(px(14.0))
+                .rounded_sm()
+                .border_1()
+                .border_color(rgb(colors.sidebar_border))
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_xs()
+                .text_color(rgb(colors.text_dim))
+                .child(">_"),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_sm()
+                .text_ellipsis()
+                .text_color(rgb(text))
+                .child(title),
+        )
+        .when(selected, |tab| {
+            tab.child(close_pane_tab_button(index, cx))
+                .child(div().absolute().top_0().left_0().right_0().h(px(2.0)).bg(rgb(accent)))
+        })
+}
+
+fn close_pane_tab_button(index: usize, cx: &mut Context<Workspace>) -> impl IntoElement {
+    let colors = theme::colors(cx);
+    div()
+        .id(("pane-tab-close", index))
+        .h(px(16.0))
+        .w(px(16.0))
+        .rounded_sm()
+        .flex()
+        .items_center()
+        .justify_center()
+        .flex_shrink_0()
+        .text_xs()
+        .text_color(rgb(colors.text_dim))
+        .cursor_pointer()
+        .hover(move |style| style.bg(rgb(colors.button)).text_color(rgb(colors.text)))
+        .tooltip(action_tooltip("Close Tab", close_tab_shortcut()))
+        .child("×")
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _event, window, cx| {
+                cx.stop_propagation();
+                let session = this.active_session;
+                this.close_pane_tab(session, index, window, cx);
+            }),
+        )
 }
 
 fn close_tab_button(index: usize, cx: &mut Context<Workspace>) -> impl IntoElement {
@@ -519,13 +785,13 @@ fn close_tab_button(index: usize, cx: &mut Context<Workspace>) -> impl IntoEleme
         .text_color(rgb(colors.text_dim))
         .cursor_pointer()
         .hover(move |style| style.bg(rgb(colors.button)).text_color(rgb(colors.text)))
-        .tooltip(action_tooltip("Close Tab", close_tab_shortcut()))
+        .tooltip(action_tooltip("Close Session", close_session_shortcut()))
         .child("×")
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, _event, window, cx| {
                 cx.stop_propagation();
-                this.close_tab(index, window, cx);
+                this.close_session(index, window, cx);
             }),
         )
 }
@@ -581,7 +847,7 @@ fn tab_row(
         index,
         title: title.clone(),
     };
-    let on_select = cx.listener(move |this, _event, window, cx| this.select_tab(index, window, cx));
+    let on_select = cx.listener(move |this, _event, window, cx| this.select_session(index, window, cx));
     let on_drag_move = cx.listener(move |this, event: &DragMoveEvent<TabDrag>, _, cx| {
         if !tab_drag_is_over(event) {
             return;
@@ -700,6 +966,10 @@ impl Render for ActionTooltip {
     }
 }
 
+fn new_session_shortcut() -> &'static str {
+    if cfg!(target_os = "macos") { "⌘⇧T" } else { "Ctrl+Alt+T" }
+}
+
 fn new_tab_shortcut() -> &'static str {
     if cfg!(target_os = "macos") { "⌘T" } else { "Ctrl+Shift+T" }
 }
@@ -708,8 +978,64 @@ fn close_tab_shortcut() -> &'static str {
     if cfg!(target_os = "macos") { "⌘W" } else { "Ctrl+Shift+W" }
 }
 
+fn close_session_shortcut() -> &'static str {
+    if cfg!(target_os = "macos") { "⌘⇧W" } else { "Ctrl+Alt+W" }
+}
+
 fn settings_shortcut() -> &'static str {
     if cfg!(target_os = "macos") { "⌘," } else { "Ctrl+," }
+}
+
+fn view_menu() -> Menu {
+    let mut items = vec![
+        MenuItem::action("Clear Screen", ClearScreen),
+        MenuItem::separator(),
+        MenuItem::action("Close Session", CloseSession),
+        MenuItem::separator(),
+    ];
+    for number in 1..=9 {
+        items.push(MenuItem::action(format!("Tab {number}"), ActivateTab { index: number - 1 }));
+    }
+    items.push(MenuItem::separator());
+    for number in 1..=9 {
+        items.push(MenuItem::action(format!("Session {number}"), ActivateSession { index: number - 1 }));
+    }
+    Menu {
+        name: "View".into(),
+        items,
+    }
+}
+
+fn workspace_key_bindings() -> Vec<KeyBinding> {
+    let mut bindings = vec![
+        KeyBinding::new("cmd-q", Quit, None),
+        KeyBinding::new("cmd-n", NewWindow, None),
+        KeyBinding::new("cmd-shift-t", NewSession, None),
+        KeyBinding::new("cmd-t", NewTab, None),
+        KeyBinding::new("cmd-w", CloseTab, None),
+        KeyBinding::new("cmd-shift-w", CloseSession, None),
+        KeyBinding::new("cmd-c", Copy, None),
+        KeyBinding::new("cmd-v", Paste, None),
+        KeyBinding::new("cmd-k", ClearScreen, None),
+        KeyBinding::new("cmd-,", OpenSettings, None),
+        KeyBinding::new("ctrl-,", OpenSettings, None),
+        KeyBinding::new("ctrl-alt-t", NewSession, None),
+        KeyBinding::new("ctrl-alt-w", CloseSession, None),
+        KeyBinding::new("ctrl-shift-t", NewTab, None),
+        KeyBinding::new("ctrl-shift-w", CloseTab, None),
+        KeyBinding::new("ctrl-shift-c", Copy, None),
+        KeyBinding::new("ctrl-shift-v", Paste, None),
+    ];
+    for number in 1..=9 {
+        let index = number - 1;
+        bindings.push(KeyBinding::new(&format!("cmd-{number}"), ActivateTab { index }, None));
+        bindings.push(KeyBinding::new(&format!("ctrl-shift-{number}"), ActivateTab { index }, None));
+        bindings.push(KeyBinding::new(&format!("ctrl-{number}"), ActivateSession { index }, None));
+    }
+    bindings.push(KeyBinding::new("cmd-0", ActivateTab { index: 9 }, None));
+    bindings.push(KeyBinding::new("ctrl-shift-0", ActivateTab { index: 9 }, None));
+    bindings.push(KeyBinding::new("ctrl-0", ActivateSession { index: 9 }, None));
+    bindings
 }
 
 fn main() {
@@ -729,21 +1055,7 @@ fn main() {
             open_workspace_window(cx);
         });
         cx.on_action(|_: &OpenSettings, cx| settings::open(cx));
-        cx.bind_keys([
-            KeyBinding::new("cmd-q", Quit, None),
-            KeyBinding::new("cmd-n", NewWindow, None),
-            KeyBinding::new("cmd-t", NewTab, None),
-            KeyBinding::new("cmd-w", CloseTab, None),
-            KeyBinding::new("cmd-c", Copy, None),
-            KeyBinding::new("cmd-v", Paste, None),
-            KeyBinding::new("cmd-k", ClearScreen, None),
-            KeyBinding::new("cmd-,", OpenSettings, None),
-            KeyBinding::new("ctrl-,", OpenSettings, None),
-            KeyBinding::new("ctrl-shift-t", NewTab, None),
-            KeyBinding::new("ctrl-shift-w", CloseTab, None),
-            KeyBinding::new("ctrl-shift-c", Copy, None),
-            KeyBinding::new("ctrl-shift-v", Paste, None),
-        ]);
+        cx.bind_keys(workspace_key_bindings());
         cx.set_menus(vec![
             Menu {
                 name: "Ghostterm".into(),
@@ -757,19 +1069,18 @@ fn main() {
                 name: "File".into(),
                 items: vec![
                     MenuItem::action("New Window", NewWindow),
+                    MenuItem::action("New Session", NewSession),
                     MenuItem::action("New Tab", NewTab),
                     MenuItem::separator(),
-                    MenuItem::action("Close", CloseTab),
+                    MenuItem::action("Close Tab", CloseTab),
+                    MenuItem::action("Close Session", CloseSession),
                 ],
             },
             Menu {
                 name: "Edit".into(),
                 items: vec![MenuItem::action("Copy", Copy), MenuItem::action("Paste", Paste)],
             },
-            Menu {
-                name: "View".into(),
-                items: vec![MenuItem::action("Clear Screen", ClearScreen)],
-            },
+            view_menu(),
             Menu {
                 name: "Window".into(),
                 items: vec![MenuItem::action("Close", CloseTab)],
