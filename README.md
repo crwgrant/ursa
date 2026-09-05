@@ -71,14 +71,19 @@ family = "Menlo"
 size = 13
 
 [appearance]
-theme = "tokyo-night" # catppuccin-mocha, gruvbox-dark, one-dark, nord, solarized-light
+theme = "tokyo-night"
+themes = "themes.toml"
 
 [terminal]
 scrollback_lines = 2000
 cursor = "bar" # or "block"
 ```
 
-The Settings window writes this file when you change a value. Editing the file by hand reloads within a couple of seconds (or immediately via **Reload**). Invalid TOML keeps the last good settings and shows a toast; a missing file uses the platform defaults. Unknown keys are ignored so older Ghostterm versions stay compatible.
+`theme` is the name of a table in the themes file. Built-in defaults include `tokyo-night`, `one-dark`, `nord`, `catppuccin-mocha`, `gruvbox-dark`, and `solarized-light`. `themes` is a path to that catalog: relative to `config.toml`, or absolute.
+
+The default `themes.toml` is written next to `config.toml` on first launch if it is missing. Add a table per theme (`label`, chrome colors, `term_fg` / `term_bg` / `cursor`, and a 16-color `ansi` array). Colors are `0xRRGGBB` (or `"#rrggbb"`).
+
+The Settings window writes `config.toml` when you change a value. Editing either file by hand reloads within a couple of seconds (or immediately via **Reload**). Invalid TOML keeps the last good settings and shows a toast; a missing file uses the platform defaults. Unknown keys are ignored so older Ghostterm versions stay compatible.
 
 ## Roadmap
 

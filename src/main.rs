@@ -41,6 +41,11 @@ impl Workspace {
             cx.notify();
         })
         .detach();
+        cx.observe_global::<theme::ThemeCatalog>(|this, cx| {
+            this.apply_config(cx);
+            cx.notify();
+        })
+        .detach();
         workspace
     }
 
