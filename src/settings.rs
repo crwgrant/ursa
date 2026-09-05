@@ -102,6 +102,10 @@ impl SettingsPage {
             cx.notify();
         }
     }
+
+    fn close_window(&mut self, window: &mut Window, _cx: &mut Context<Self>) {
+        window.remove_window();
+    }
 }
 
 pub fn open(cx: &mut App) {
@@ -235,6 +239,7 @@ impl Render for SettingsPage {
             .text_color(rgb(colors.text))
             .font_family(theme::UI_FONT_FAMILY)
             .on_key_down(cx.listener(|this, event, _window, cx| this.handle_key(event, cx)))
+            .on_action(cx.listener(|this, _: &crate::CloseTab, window, cx| this.close_window(window, cx)))
             .child(
                 div()
                     .flex_1()
@@ -592,6 +597,7 @@ impl Render for ScrollbackField {
             })
             .cursor(CursorStyle::IBeam)
             .on_key_down(cx.listener(|this, event, _window, cx| this.handle_key(event, cx)))
+            .on_action(|_: &crate::CloseTab, window, _cx| window.remove_window())
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _event, window, cx| {
