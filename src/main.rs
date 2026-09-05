@@ -10,9 +10,9 @@ mod settings;
 mod theme;
 
 use gpui::{
-    AnyElement, AnyView, App, Application, Bounds, Context, CursorStyle, DragMoveEvent, KeyBinding, Menu, MenuItem, MouseButton,
-    MouseDownEvent, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, point, prelude::*, px, rgb,
-    size,
+    Action, AnyElement, AnyView, App, Application, Bounds, Context, CursorStyle, DragMoveEvent, KeyBinding, Menu, MenuItem,
+    MouseButton, MouseDownEvent, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, point,
+    prelude::*, px, rgb, size,
 };
 use session::{Session, SessionEvent};
 
@@ -24,12 +24,25 @@ actions!(
         NewSession,
         NewTab,
         CloseTab,
+        CloseSession,
         Copy,
         Paste,
         ClearScreen,
         OpenSettings
     ]
 );
+
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = ghostterm, no_json)]
+struct ActivateTab {
+    index: usize,
+}
+
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = ghostterm, no_json)]
+struct ActivateSession {
+    index: usize,
+}
 
 pub(crate) const APP_ID: &str = "com.crwgrant.ghostterm";
 const WINDOW_WIDTH: f32 = 1100.0;
@@ -260,6 +273,10 @@ impl Workspace {
         self.close_pane_tab(session, tab, window, cx);
     }
 
+    fn close_active_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_session(self.active_session, window, cx);
+    }
+
     fn focus_active(&self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(tab) = self.active_tab() {
             tab.update(cx, |session, _cx| session.focus(window));
@@ -397,6 +414,9 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &NewSession, window, cx| this.add_session(window, cx)))
             .on_action(cx.listener(|this, _: &NewTab, window, cx| this.add_tab(window, cx)))
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| this.close_active_tab(window, cx)))
+            .on_action(cx.listener(|this, _: &CloseSession, window, cx| this.close_active_session(window, cx)))
+            .on_action(cx.listener(|this, action: &ActivateTab, window, cx| this.select_tab(action.index, window, cx)))
+            .on_action(cx.listener(|this, action: &ActivateSession, window, cx| this.select_session(action.index, window, cx)))
             .when(self.can_copy(cx), |el| {
                 el.on_action(cx.listener(|this, _: &Copy, _window, cx| this.copy_active(cx)))
             })
@@ -959,11 +979,43 @@ fn close_tab_shortcut() -> &'static str {
 }
 
 fn close_session_shortcut() -> &'static str {
-    if cfg!(target_os = "macos") { "⌘W" } else { "Ctrl+Shift+W" }
+    if cfg!(target_os = "macos") { "⌘⇧W" } else { "Ctrl+Alt+W" }
 }
 
 fn settings_shortcut() -> &'static str {
     if cfg!(target_os = "macos") { "⌘," } else { "Ctrl+," }
+}
+
+fn workspace_key_bindings() -> Vec<KeyBinding> {
+    let mut bindings = vec![
+        KeyBinding::new("cmd-q", Quit, None),
+        KeyBinding::new("cmd-n", NewWindow, None),
+        KeyBinding::new("cmd-shift-t", NewSession, None),
+        KeyBinding::new("cmd-t", NewTab, None),
+        KeyBinding::new("cmd-w", CloseTab, None),
+        KeyBinding::new("cmd-shift-w", CloseSession, None),
+        KeyBinding::new("cmd-c", Copy, None),
+        KeyBinding::new("cmd-v", Paste, None),
+        KeyBinding::new("cmd-k", ClearScreen, None),
+        KeyBinding::new("cmd-,", OpenSettings, None),
+        KeyBinding::new("ctrl-,", OpenSettings, None),
+        KeyBinding::new("ctrl-alt-t", NewSession, None),
+        KeyBinding::new("ctrl-alt-w", CloseSession, None),
+        KeyBinding::new("ctrl-shift-t", NewTab, None),
+        KeyBinding::new("ctrl-shift-w", CloseTab, None),
+        KeyBinding::new("ctrl-shift-c", Copy, None),
+        KeyBinding::new("ctrl-shift-v", Paste, None),
+    ];
+    for number in 1..=9 {
+        let index = number - 1;
+        bindings.push(KeyBinding::new(&format!("cmd-{number}"), ActivateTab { index }, None));
+        bindings.push(KeyBinding::new(&format!("ctrl-shift-{number}"), ActivateTab { index }, None));
+        bindings.push(KeyBinding::new(&format!("ctrl-{number}"), ActivateSession { index }, None));
+    }
+    bindings.push(KeyBinding::new("cmd-0", ActivateTab { index: 9 }, None));
+    bindings.push(KeyBinding::new("ctrl-shift-0", ActivateTab { index: 9 }, None));
+    bindings.push(KeyBinding::new("ctrl-0", ActivateSession { index: 9 }, None));
+    bindings
 }
 
 fn main() {
@@ -983,23 +1035,7 @@ fn main() {
             open_workspace_window(cx);
         });
         cx.on_action(|_: &OpenSettings, cx| settings::open(cx));
-        cx.bind_keys([
-            KeyBinding::new("cmd-q", Quit, None),
-            KeyBinding::new("cmd-n", NewWindow, None),
-            KeyBinding::new("cmd-shift-t", NewSession, None),
-            KeyBinding::new("cmd-t", NewTab, None),
-            KeyBinding::new("cmd-w", CloseTab, None),
-            KeyBinding::new("cmd-c", Copy, None),
-            KeyBinding::new("cmd-v", Paste, None),
-            KeyBinding::new("cmd-k", ClearScreen, None),
-            KeyBinding::new("cmd-,", OpenSettings, None),
-            KeyBinding::new("ctrl-,", OpenSettings, None),
-            KeyBinding::new("ctrl-alt-t", NewSession, None),
-            KeyBinding::new("ctrl-shift-t", NewTab, None),
-            KeyBinding::new("ctrl-shift-w", CloseTab, None),
-            KeyBinding::new("ctrl-shift-c", Copy, None),
-            KeyBinding::new("ctrl-shift-v", Paste, None),
-        ]);
+        cx.bind_keys(workspace_key_bindings());
         cx.set_menus(vec![
             Menu {
                 name: "Ghostterm".into(),
@@ -1016,7 +1052,8 @@ fn main() {
                     MenuItem::action("New Session", NewSession),
                     MenuItem::action("New Tab", NewTab),
                     MenuItem::separator(),
-                    MenuItem::action("Close", CloseTab),
+                    MenuItem::action("Close Tab", CloseTab),
+                    MenuItem::action("Close Session", CloseSession),
                 ],
             },
             Menu {

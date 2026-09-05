@@ -4,8 +4,8 @@ A terminal emulator built in Rust with [GPUI](https://github.com/zed-industries/
 
 ## Features
 
-- Sessions in a left sidebar: add with **⌘⇧T** or the **+** button, close with **×**, drag to reorder; drag the right edge to resize, double-click to reset
-- Horizontal tabs per session: add with **⌘T** or the tab-bar **+**, close with **⌘W** or **×**
+- Sessions in a left sidebar: add with **⌘⇧T** or the **+** button, close with **⌘⇧W** or **×**, switch with **⌃1–⌃9**, drag to reorder; drag the right edge to resize, double-click to reset
+- Horizontal tabs per session: add with **⌘T** or the tab-bar **+**, close with **⌘W** or **×**, switch with **⌘1–⌘9**
 - Mouse selection: click-drag, double-click a word, triple-click a line, Option-drag for a block
 - Line and word movement: **⌘← / ⌘→** jump to the start or end of the line; **⌥← / ⌥→** move by word
 - Delete by word and line: **⌥⌫** / **⌥⌦** kill the previous or next word; **⌘⌫** / **⌘⌦** kill to the start or end of the line
@@ -43,6 +43,9 @@ The window title is **Ghostterm**. On macOS, `$SHELL` is used when present (othe
 | New session | ⌘⇧T |
 | New tab | ⌘T |
 | Close tab | ⌘W |
+| Close session | ⌘⇧W |
+| Switch tab | ⌘1–⌘9 |
+| Switch session | ⌃1–⌃9 |
 | Quit | ⌘Q |
 | Start / end of line | ⌘← / ⌘→ |
 | Previous / next word | ⌥← / ⌥→ |
@@ -55,7 +58,7 @@ The window title is **Ghostterm**. On macOS, `$SHELL` is used when present (othe
 | Clear screen | ⌘K |
 | Settings | ⌘, |
 
-On Windows, use **Ctrl+Shift** in place of **⌘** (for example **Ctrl+Shift+T** for a new tab, **Ctrl+Alt+T** for a new session, **Ctrl+Shift+C** / **Ctrl+Shift+V** to copy and paste). **Ctrl+C** still goes to the shell. Settings is **Ctrl+,**.
+On Windows, use **Ctrl+Shift** in place of **⌘** (for example **Ctrl+Shift+T** for a new tab, **Ctrl+Alt+T** for a new session, **Ctrl+Alt+W** to close a session, **Ctrl+Shift+1–9** to switch tabs, **Ctrl+1–9** to switch sessions, **Ctrl+Shift+C** / **Ctrl+Shift+V** to copy and paste). **Ctrl+C** still goes to the shell. Settings is **Ctrl+,**.
 
 ## Configuration
 
@@ -149,7 +152,7 @@ Config parse/round-trip tests live in `src/config.rs` (`cargo test`). A broader 
 - Shift-produced characters (`:@#!` and the rest of the punctuation set) encode to the PTY
 - ⌘← / ⌘→ send beginning/end of line; ⌥← / ⌥→ send word jumps
 - ⌥⌫ / ⌥⌦ send word-kill; ⌘⌫ / ⌘⌦ send kill to start/end of line
-- Reserved shortcuts (⌘Q / ⌘⇧T / ⌘T / ⌘W / ⌘,) are not forwarded as terminal keys
+- Reserved shortcuts (⌘Q / ⌘⇧T / ⌘T / ⌘W / ⌘⇧W / ⌘1–⌘9 / ⌃1–⌃9 / ⌘,) are not forwarded as terminal keys
 
 ### Links and paths
 
