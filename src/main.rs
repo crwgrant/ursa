@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod about;
+mod app_menu;
 mod config;
 mod cwd;
 mod frame;
@@ -16,9 +17,10 @@ use std::collections::HashMap;
 
 use gpui::{
     Action, AnyElement, AnyView, App, Application, Bounds, Context, CursorStyle, DragMoveEvent, KeyBinding, KeyDownEvent,
-    Keystroke, Menu, MenuItem, MouseButton, MouseDownEvent, Pixels, SharedString, TitlebarOptions, Window, WindowBounds,
+    Keystroke, MenuItem, MouseButton, MouseDownEvent, Pixels, SharedString, TitlebarOptions, Window, WindowBounds,
     WindowOptions, actions, canvas, div, point, prelude::*, px, rgb, size,
 };
+use app_menu::AppMenuState;
 use panes::{PaneSpec, SplitAxis};
 use session::{Session, SessionEvent, TabRestore};
 
@@ -45,14 +47,14 @@ actions!(
 
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = ursa, no_json)]
-struct ActivateTab {
-    index: usize,
+pub(crate) struct ActivateTab {
+    pub(crate) index: usize,
 }
 
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = ursa, no_json)]
-struct ActivateSession {
-    index: usize,
+pub(crate) struct ActivateSession {
+    pub(crate) index: usize,
 }
 
 pub(crate) const APP_ID: &str = "com.crwgrant.ursa";
@@ -94,6 +96,7 @@ struct Workspace {
     next_split_id: u64,
     pane_bounds: HashMap<u64, Bounds<Pixels>>,
     pane_split_locked: bool,
+    open_menu: Option<app_menu::OpenMenu>,
 }
 
 #[derive(Clone)]
@@ -505,6 +508,7 @@ impl Workspace {
             next_split_id: 0,
             pane_bounds: HashMap::new(),
             pane_split_locked: false,
+            open_menu: None,
         };
         workspace.assign_all_split_ids();
         for index in 0..workspace.sessions.len() {
@@ -1084,9 +1088,12 @@ impl Render for Workspace {
             .collect();
 
         let colors = theme::colors(cx);
+        let sessions_enabled = config::sessions_enabled(cx);
+        let open_menu = self.open_menu.as_ref();
         div()
             .relative()
             .flex()
+            .flex_col()
             .size_full()
             .bg(rgb(colors.window))
             .text_color(rgb(colors.text))
@@ -1105,6 +1112,10 @@ impl Render for Workspace {
             })
             .on_action(cx.listener(|this, _: &ClearScreen, _window, cx| this.clear_active(cx)))
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                if event.keystroke.key == "escape" && this.dismiss_app_menu(cx) {
+                    cx.stop_propagation();
+                    return;
+                }
                 if this.forward_tab_to_focused(&event.keystroke, cx) {
                     cx.stop_propagation();
                 }
@@ -1115,11 +1126,64 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &FocusPrevPane, window, cx| this.focus_offset(-1, window, cx)))
             .on_action(|_: &OpenSettings, _window, cx| crate::settings::open(cx))
             .on_action(|_: &OpenAbout, _window, cx| crate::about::open(cx))
-            .when(config::sessions_enabled(cx), |workspace| {
-                workspace.child(self.render_sidebar(&tabs, cx)).child(self.render_split(cx))
+            .when(cfg!(not(target_os = "macos")), |workspace| {
+                workspace.child(app_menu::render_bar(
+                    open_menu.map(|menu| menu.id),
+                    sessions_enabled,
+                    cx,
+                ))
             })
-            .child(self.render_terminal(cx))
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    .when(sessions_enabled, |workspace| {
+                        workspace.child(self.render_sidebar(&tabs, cx)).child(self.render_split(cx))
+                    })
+                    .child(self.render_terminal(cx)),
+            )
+            .when(cfg!(not(target_os = "macos")), |workspace| {
+                workspace.children(app_menu::render_popovers(open_menu, sessions_enabled, cx))
+            })
             .child(notify::overlay(cx))
+    }
+}
+
+impl app_menu::AppMenuState for Workspace {
+    fn toggle_app_menu(&mut self, id: app_menu::MenuId, origin: gpui::Point<Pixels>, cx: &mut Context<Self>) {
+        if self.open_menu.as_ref().map(|menu| menu.id) == Some(id) {
+            self.open_menu = None;
+        } else {
+            self.open_menu = Some(app_menu::OpenMenu { id, origin });
+        }
+        cx.notify();
+    }
+
+    fn hover_app_menu(&mut self, id: app_menu::MenuId, origin: gpui::Point<Pixels>, cx: &mut Context<Self>) {
+        let Some(open) = &self.open_menu else {
+            return;
+        };
+        if open.id == id {
+            return;
+        }
+        self.open_menu = Some(app_menu::OpenMenu { id, origin });
+        cx.notify();
+    }
+
+    fn dismiss_app_menu(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.open_menu.take().is_none() {
+            return false;
+        }
+        cx.notify();
+        true
+    }
+
+    fn run_app_menu_action(&mut self, action: Box<dyn Action>, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_menu = None;
+        cx.notify();
+        window.dispatch_action(action, cx);
     }
 }
 
@@ -1458,7 +1522,7 @@ fn settings_button(cx: &App) -> impl IntoElement {
                 .gap_2()
                 .cursor_pointer()
                 .hover(move |style| style.bg(rgb(colors.tab_hover)))
-                .tooltip(action_tooltip("Settings", settings_shortcut()))
+                .tooltip(action_tooltip("Settings", app_menu::settings_shortcut()))
                 .child(div().w(px(6.0)).h(px(6.0)).rounded_full().bg(rgb(colors.text_dim)))
                 .child(
                     div()
@@ -1490,7 +1554,7 @@ fn new_tab_button(cx: &mut Context<Workspace>) -> impl IntoElement {
         .text_sm()
         .cursor_pointer()
         .hover(move |style| style.bg(rgb(colors.tab_hover)))
-        .tooltip(action_tooltip("New Session", new_session_shortcut()))
+        .tooltip(action_tooltip("New Session", app_menu::new_session_shortcut()))
         .child("+")
         .on_mouse_down(MouseButton::Left, cx.listener(|this, _event, window, cx| this.add_session(window, cx)))
 }
@@ -1510,7 +1574,7 @@ fn pane_settings_button(cx: &mut Context<Workspace>) -> impl IntoElement {
         .text_color(rgb(colors.text_dim))
         .cursor_pointer()
         .hover(move |style| style.bg(rgb(colors.tab_hover)).text_color(rgb(colors.text)))
-        .tooltip(action_tooltip("Settings", settings_shortcut()))
+        .tooltip(action_tooltip("Settings", app_menu::settings_shortcut()))
         .child("Settings")
         .on_mouse_down(MouseButton::Left, |_, _, cx| {
             crate::settings::open(cx);
@@ -1533,7 +1597,7 @@ fn new_pane_tab_button(cx: &mut Context<Workspace>) -> impl IntoElement {
         .text_color(rgb(colors.text_dim))
         .cursor_pointer()
         .hover(move |style| style.bg(rgb(colors.tab_hover)).text_color(rgb(colors.text)))
-        .tooltip(action_tooltip("New Tab", new_tab_shortcut()))
+        .tooltip(action_tooltip("New Tab", app_menu::new_tab_shortcut()))
         .child("+")
         .on_mouse_down(MouseButton::Left, cx.listener(|this, _event, window, cx| this.add_tab(window, cx)))
 }
@@ -1612,7 +1676,7 @@ fn close_pane_tab_button(index: usize, cx: &mut Context<Workspace>) -> impl Into
         .text_color(rgb(colors.text_dim))
         .cursor_pointer()
         .hover(move |style| style.bg(rgb(colors.button)).text_color(rgb(colors.text)))
-        .tooltip(action_tooltip("Close Tab", close_tab_shortcut()))
+        .tooltip(action_tooltip("Close Tab", app_menu::close_tab_shortcut()))
         .child("×")
         .on_mouse_down(
             MouseButton::Left,
@@ -1639,7 +1703,7 @@ fn close_tab_button(index: usize, cx: &mut Context<Workspace>) -> impl IntoEleme
         .text_color(rgb(colors.text_dim))
         .cursor_pointer()
         .hover(move |style| style.bg(rgb(colors.button)).text_color(rgb(colors.text)))
-        .tooltip(action_tooltip("Close Session", close_session_shortcut()))
+        .tooltip(action_tooltip("Close Session", app_menu::close_session_shortcut()))
         .child("×")
         .on_mouse_down(
             MouseButton::Left,
@@ -1820,105 +1884,15 @@ impl Render for ActionTooltip {
     }
 }
 
-fn new_session_shortcut() -> &'static str {
-    if cfg!(target_os = "macos") { "⌘⇧T" } else { "Ctrl+Alt+T" }
-}
-
-fn new_tab_shortcut() -> &'static str {
-    if cfg!(target_os = "macos") { "⌘T" } else { "Ctrl+Shift+T" }
-}
-
-fn close_tab_shortcut() -> &'static str {
-    if cfg!(target_os = "macos") { "⌘W" } else { "Ctrl+Shift+W" }
-}
-
-fn close_session_shortcut() -> &'static str {
-    if cfg!(target_os = "macos") { "⌘⇧W" } else { "Ctrl+Alt+W" }
-}
-
-fn settings_shortcut() -> &'static str {
-    if cfg!(target_os = "macos") { "⌘," } else { "Ctrl+," }
-}
-
-fn view_menu(sessions_enabled: bool) -> Menu {
-    let mut items = vec![
-        MenuItem::action("Clear Screen", ClearScreen),
-        MenuItem::separator(),
-        MenuItem::action("Focus Next Pane", FocusNextPane),
-        MenuItem::action("Focus Previous Pane", FocusPrevPane),
-        MenuItem::separator(),
-    ];
-    if sessions_enabled {
-        items.push(MenuItem::action("Close Session", CloseSession));
-        items.push(MenuItem::separator());
-    }
-    for number in 1..=9 {
-        items.push(MenuItem::action(format!("Tab {number}"), ActivateTab { index: number - 1 }));
-    }
-    if sessions_enabled {
-        items.push(MenuItem::separator());
-        for number in 1..=9 {
-            items.push(MenuItem::action(format!("Session {number}"), ActivateSession { index: number - 1 }));
-        }
-    }
-    Menu {
-        name: "View".into(),
-        items,
-    }
-}
-
-fn file_menu(sessions_enabled: bool) -> Menu {
-    let mut items = vec![MenuItem::action("New Window", NewWindow)];
-    if sessions_enabled {
-        items.push(MenuItem::action("New Session", NewSession));
-    }
-    items.push(MenuItem::action("New Tab", NewTab));
-    items.push(MenuItem::action("Split Right", SplitRight));
-    items.push(MenuItem::action("Split Down", SplitDown));
-    items.push(MenuItem::separator());
-    items.push(MenuItem::action("Close Tab", CloseTab));
-    if sessions_enabled {
-        items.push(MenuItem::action("Close Session", CloseSession));
-    }
-    Menu {
-        name: "File".into(),
-        items,
-    }
-}
-
-fn app_menus(sessions_enabled: bool) -> Vec<Menu> {
-    vec![
-        Menu {
-            name: "Ursa".into(),
-            items: vec![
-                MenuItem::action("About Ursa", OpenAbout),
-                MenuItem::separator(),
-                MenuItem::action("Settings…", OpenSettings),
-                MenuItem::separator(),
-                MenuItem::action("Quit Ursa", Quit),
-            ],
-        },
-        file_menu(sessions_enabled),
-        Menu {
-            name: "Edit".into(),
-            items: vec![MenuItem::action("Copy", Copy), MenuItem::action("Paste", Paste)],
-        },
-        view_menu(sessions_enabled),
-        Menu {
-            name: "Window".into(),
-            items: vec![MenuItem::action("Close", CloseTab)],
-        },
-    ]
-}
-
 fn apply_app_menus(cx: &mut App) {
-    cx.set_menus(app_menus(config::sessions_enabled(cx)));
+    cx.set_menus(app_menu::native_menus(config::sessions_enabled(cx)));
 }
 
 fn workspace_key_bindings() -> Vec<KeyBinding> {
     let mut bindings = vec![
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("cmd-n", NewWindow, None),
+        KeyBinding::new("ctrl-n", NewWindow, None),
         KeyBinding::new("cmd-shift-t", NewSession, None),
         KeyBinding::new("cmd-t", NewTab, None),
         KeyBinding::new("cmd-w", CloseTab, None),
