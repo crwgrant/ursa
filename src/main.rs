@@ -793,7 +793,7 @@ impl Workspace {
         if tab.root.leaf_count() >= panes::MAX_PANES {
             return;
         }
-        let cwd = tab.focused_session().and_then(|session| session.read(cx).cwd.clone());
+        let cwd = tab.focused_session().and_then(|session| session.read(cx).spawn_cwd());
         let tab_index = self.sessions.get(self.active_session).map(|group| group.active).unwrap_or(0);
         let session = cx.new(|cx| Session::spawn(tab_index, window, cx, TabRestore { cwd, snapshot: None }));
         let id = self.next_split_id;
@@ -1002,7 +1002,7 @@ impl Workspace {
                     .map(|tab| config::TabLayout {
                         spec: tab.root.spec(),
                         focused: tab.focused,
-                        cwds: tab.root.leaves().iter().map(|session| session.read(cx).cwd.clone()).collect(),
+                        cwds: tab.root.leaves().iter().map(|session| session.read(cx).spawn_cwd()).collect(),
                     })
                     .collect(),
             })

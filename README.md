@@ -6,12 +6,12 @@ A terminal emulator built in Rust with [GPUI](https://github.com/zed-industries/
 
 - Sessions in a left sidebar: add with **⌘⇧T** or the **+** button, close with **⌘⇧W** or **×**, switch with **⌃1–⌃9**, drag to reorder; drag the right edge to resize, double-click to reset
 - Horizontal tabs per session: add with **⌘T** or the tab-bar **+**, close a tab’s last pane with **⌘W** or the tab **×**, switch with **⌘1–⌘9**
-- Split panes inside a tab: **⌘D** splits right, **⌘⇧D** splits down, **⌘] / ⌘[** move focus, click a pane to focus it; drag the gutter to resize, double-click to reset. **⌘W** closes the focused pane; the last pane closes the tab. A new pane starts in the current pane’s working directory. Up to 16 panes per tab.
+- Split panes inside a tab: **⌘D** splits right, **⌘⇧D** splits down, **⌘] / ⌘[** move focus, click a pane to focus it; drag the gutter to resize, double-click to reset. **⌘W** closes the focused pane; the last pane closes the tab. A new pane starts a **new local login shell** in the current pane’s local working directory. After SSH, that is the directory you ran `ssh` from, not the remote path, and not a second SSH session. Up to 16 panes per tab.
 - Mouse selection: click-drag, double-click a word, triple-click a line, Option-drag for a block
 - Line and word movement: **⌘← / ⌘→** jump to the start or end of the line; **⌥← / ⌥→** move by word
 - Delete by word and line: **⌥⌫** / **⌥⌦** kill the previous or next word; **⌘⌫** / **⌘⌦** kill to the start or end of the line
 - **⌘-click** `http(s)` URLs to open them in the browser (hold **⌘** to highlight the link first)
-- **⌘-click** filesystem paths to open Finder at that folder (a file path opens the parent directory)
+- **⌘-click** local filesystem paths to open Finder at that folder (a file path opens the parent directory). Paths from a remote OSC 7 session are not treated as folders on this machine
 - Right-click a URL, URI, or path for **Copy**, **Paste**, and **Open Link** (or **Open Folder**)
 - In-app toasts for copy and paste feedback (bottom-right, click or wait to dismiss)
 - **⌘K** clears the screen and scrollback; the shell redraws the prompt at the top
@@ -76,7 +76,7 @@ Ghostterm reads a TOML file it owns (not libghostty). The file is created the fi
 
 If `XDG_CONFIG_HOME` is set, that directory is used instead of `~/.config`. An existing folder at the previous locations (`~/Library/Application Support/Ghostterm` on macOS, `%APPDATA%\Ghostterm` on Windows) is still used until you move it.
 
-Window position, size, which monitor it was on, the sidebar split width, and the session/tab/pane layout are stored separately in `window.toml` in the same folder, so moving or resizing the app does not rewrite `config.toml`. Extra windows opened with ⌘N are offset from that saved frame and start with one session. If that monitor is unplugged, the window is centered on the current screen. Drag the border between the sessions list and the terminal to resize; double-click it or use **Reset to Defaults** in Settings to restore the 220px width. With **Keep sessions**, reopening restores the last sessions, tabs, and split trees, each pane’s working directory, and the text that was on screen. A new shell starts in that directory (running commands are not resumed). Screen snapshots live in `state/` next to `window.toml` (`s{session}-t{tab}-p{pane}.snp`). **Close sessions** (the default) and quitting with only an unused tab both start clean on the next launch.
+Window position, size, which monitor it was on, the sidebar split width, and the session/tab/pane layout are stored separately in `window.toml` in the same folder, so moving or resizing the app does not rewrite `config.toml`. Extra windows opened with ⌘N are offset from that saved frame and start with one session. If that monitor is unplugged, the window is centered on the current screen. Drag the border between the sessions list and the terminal to resize; double-click it or use **Reset to Defaults** in Settings to restore the 220px width. With **Keep sessions**, reopening restores the last sessions, tabs, and split trees, each pane’s **local** working directory, and the text that was on screen. A new shell starts in that directory (running commands are not resumed). Remote OSC 7 paths are not restored as a local `cd` and SSH sessions are not restarted. Screen snapshots live in `state/` next to `window.toml` (`s{session}-t{tab}-p{pane}.snp`). **Close sessions** (the default) and quitting with only an unused tab both start clean on the next launch.
 
 ```toml
 [font]
@@ -150,12 +150,26 @@ The Settings window writes `config.toml` when you change a value. Editing the co
 - [ ] Find in scrollback (⌘F)
 - [x] Equalize split sizes
 - [x] Restore the local working directory of each tab (OSC 7 when the shell sends it, otherwise the process cwd)
+- [x] OSC 7 remote-aware paths (keep the hostname; never `cd` or open Finder as if a remote path were local)
 - [ ] Zoom the focused pane
 - [ ] Rotate a split
 - [ ] Tab bar per pane
-- [ ] OSC 7 remote-aware paths
 - [ ] Underline URLs and paths without holding ⌘
 - [ ] Create a test suite (see [Test suite](#test-suite))
+
+### Remote / SSH
+
+A pane is always a local PTY and login shell. SSH is a process inside that shell, so split / new tab / restore start another local shell. They do not clone the SSH connection.
+
+- [ ] Show `user@host` (or the OSC 7 host) in the tab title while the pane is remote
+- [ ] Detect a remote session without OSC 7 (process tree, `SSH_CONNECTION`, or the SSH command in the title)
+- [ ] Duplicate the last SSH command into a new pane (optional; still a new connection)
+- [ ] Persist the local PTY cwd *and* the remote OSC 7 path so a restored pane starts where you launched `ssh`, with the host remembered for titles
+- [ ] Treat this machine’s LAN IPs and extra hostnames as local OSC 7 hosts
+- [ ] Avoid treating a remote host as local when it shares this machine’s hostname
+- [ ] Resolve relative ⌘-click paths against the pane’s local cwd (not Ghostterm’s process cwd)
+- [ ] SSH multiplexing (`ControlMaster`) so a new pane can attach to an existing connection without pretending the pane *is* SSH
+- [ ] Open remote files (SFTP, `code --remote`, and similar) — not planned with the current local-only Finder behavior
 
 ## Test suite
 
@@ -173,6 +187,7 @@ Config parse/round-trip tests live in `src/config.rs` (`cargo test`). A broader 
 - `http://`, `https://`, and `www.` matches, including wrapped lines and trailing punctuation
 - OSC 8 hyperlinks vs autodetection
 - Absolute, `~/`, and `file://` paths; files resolve to the parent directory; missing paths are ignored
+- `file://otherhost/...` and paths in a remote OSC 7 pane are not opened as local folders
 - Hover ranges cover the full URL or path
 
 ### Sessions and window

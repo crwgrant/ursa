@@ -206,7 +206,7 @@ impl WindowFrame {
 # `state` is windowed, maximized, or fullscreen. x/y/width/height are the restored windowed frame.
 # `sidebar_width` is the sessions list width in pixels.
 # `session_tabs` is the tab count per sidebar session; `active_tabs` is the selected tab in each.
-# `tab_cwds` is the last working directory of each pane leaf, session-major then tab then pane order.
+# `tab_cwds` is the last local working directory of each pane leaf, session-major then tab then pane order.
 # `tab_panes` encodes each tab’s split tree (`leaf` or `h:0.5:leaf:leaf` / `v:…`). `tab_focus` is the focused leaf.
 x = {x}
 y = {y}
