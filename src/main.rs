@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use gpui::{
     Action, AnyElement, AnyView, App, Application, Bounds, Context, CursorStyle, DragMoveEvent, KeyBinding, KeyDownEvent,
     Keystroke, Menu, MenuItem, MouseButton, MouseDownEvent, Pixels, SharedString, TitlebarOptions, Window, WindowBounds,
-    WindowOptions, actions, canvas, div, point, prelude::*, px, relative, rgb, size,
+    WindowOptions, actions, canvas, div, point, prelude::*, px, rgb, size,
 };
 use panes::{PaneSpec, SplitAxis};
 use session::{Session, SessionEvent, TabRestore};
@@ -216,6 +216,17 @@ impl PaneNode {
                     first.split_axis(id).or_else(|| second.split_axis(id))
                 }
             }
+        }
+    }
+
+    fn equalize(&mut self) {
+        if let Self::Split {
+            ratio, first, second, ..
+        } = self
+        {
+            first.equalize();
+            second.equalize();
+            *ratio = panes::equal_split_ratio(first.leaf_count(), second.leaf_count());
         }
     }
 
@@ -792,6 +803,7 @@ impl Workspace {
         };
         let focused = tab.focused;
         if let Some(next) = tab.root.split_leaf(focused, axis, session.clone(), id) {
+            tab.root.equalize();
             tab.focused = next;
             self.subscribe_terminal(&session, window, cx);
             self.focus_active(window, cx);
@@ -1270,31 +1282,29 @@ impl Workspace {
                         .absolute()
                         .size_full(),
                     )
-                    .child(
-                        div()
-                            .when(horizontal, |el| el.w(relative(*ratio)).h_full())
-                            .when(!horizontal, |el| el.h(relative(*ratio)).w_full())
-                            .min_w(px(PANE_MIN))
-                            .min_h(px(PANE_MIN))
-                            .overflow_hidden()
-                            .child(first),
-                    )
+                    .child(split_pane_slot(*ratio, horizontal, first))
                     .child(self.render_pane_gutter(id, *axis, colors, cx))
-                    .child(
-                        div()
-                            .flex_1()
-                            .when(horizontal, |el| el.h_full())
-                            .when(!horizontal, |el| el.w_full())
-                            .min_w(px(PANE_MIN))
-                            .min_h(px(PANE_MIN))
-                            .overflow_hidden()
-                            .child(second),
-                    )
+                    .child(split_pane_slot(1.0 - *ratio, horizontal, second))
                     .into_any_element()
             }
         }
     }
+}
 
+fn split_pane_slot(grow: f32, horizontal: bool, child: AnyElement) -> impl IntoElement {
+    let mut slot = div()
+        .flex_1()
+        .when(horizontal, |el| el.h_full())
+        .when(!horizontal, |el| el.w_full())
+        .min_w(px(PANE_MIN))
+        .min_h(px(PANE_MIN))
+        .overflow_hidden()
+        .child(child);
+    slot.style().flex_grow = Some(grow.max(0.01));
+    slot
+}
+
+impl Workspace {
     fn render_pane_gutter(&self, id: u64, axis: SplitAxis, colors: theme::Colors, cx: &mut Context<Self>) -> impl IntoElement {
         let horizontal = axis == SplitAxis::Horizontal;
         div()
