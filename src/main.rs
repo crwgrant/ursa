@@ -452,6 +452,10 @@ fn main() {
                 name: "View".into(),
                 items: vec![MenuItem::action("Clear Screen", ClearScreen)],
             },
+            Menu {
+                name: "Window".into(),
+                items: vec![MenuItem::action("Close", CloseTab)],
+            },
         ]);
         cx.set_dock_menu(vec![MenuItem::action("New Window", NewWindow)]);
 
