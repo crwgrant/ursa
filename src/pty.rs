@@ -5,9 +5,6 @@ use std::{
     thread,
 };
 
-#[cfg(windows)]
-use std::path::Path;
-
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 
 pub struct PtyIo {
