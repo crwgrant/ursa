@@ -46,6 +46,7 @@ impl Workspace {
             cx.notify();
         })
         .detach();
+        cx.observe_window_activation(window, |_, _, cx| cx.notify()).detach();
         workspace
     }
 
@@ -110,6 +111,10 @@ impl Workspace {
         }
     }
 
+    fn can_copy(&self, cx: &App) -> bool {
+        self.tabs.get(self.active).is_some_and(|tab| tab.read(cx).has_selection())
+    }
+
     fn copy_active(&self, cx: &mut Context<Self>) {
         if let Some(tab) = self.tabs.get(self.active) {
             tab.update(cx, |session, cx| session.copy_selection(cx));
@@ -158,8 +163,12 @@ impl Render for Workspace {
             .font_family(theme::UI_FONT_FAMILY)
             .on_action(cx.listener(|this, _: &NewTab, window, cx| this.add_tab(window, cx)))
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| this.close_active_tab(window, cx)))
-            .on_action(cx.listener(|this, _: &Copy, _window, cx| this.copy_active(cx)))
-            .on_action(cx.listener(|this, _: &Paste, _window, cx| this.paste_active(cx)))
+            .when(self.can_copy(cx), |el| {
+                el.on_action(cx.listener(|this, _: &Copy, _window, cx| this.copy_active(cx)))
+            })
+            .when(session::clipboard_has_text(cx), |el| {
+                el.on_action(cx.listener(|this, _: &Paste, _window, cx| this.paste_active(cx)))
+            })
             .on_action(cx.listener(|this, _: &ClearScreen, _window, cx| this.clear_active(cx)))
             .on_action(|_: &OpenSettings, _window, cx| crate::settings::open(cx))
             .child(self.render_sidebar(&tabs, cx))

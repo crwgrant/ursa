@@ -20,6 +20,7 @@ pub struct Frame {
     pub _foreground: Rgb,
     pub rows: Vec<FrameRow>,
     pub cursor: Option<CursorCell>,
+    pub has_selection: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -113,6 +114,7 @@ pub fn capture<'alloc>(
     let mut text = String::with_capacity(16);
     let mut row_iter = row_it.update(&snapshot)?;
     let mut row_idx = 0u32;
+    let mut has_selection = false;
 
     while let Some(row) = row_iter.next() {
         let wrapped = row.raw_row()?.is_wrapped().unwrap_or(false);
@@ -138,6 +140,7 @@ pub fn capture<'alloc>(
             }
 
             if cell.is_selected()? {
+                has_selection = true;
                 let selected_bg = bg.unwrap_or(colors.background);
                 bg = Some(fg);
                 fg = selected_bg;
@@ -201,6 +204,7 @@ pub fn capture<'alloc>(
         _foreground: Rgb::from_ghostty(colors.foreground),
         rows,
         cursor,
+        has_selection,
     })
 }
 
