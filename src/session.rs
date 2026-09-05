@@ -75,7 +75,7 @@ enum Command {
 enum Event {
     Frame(Frame),
     Title(String),
-    Pwd(PathBuf),
+    Pwd(crate::cwd::TerminalCwd),
     Exited,
 }
 
@@ -105,7 +105,8 @@ impl TabRestore {
 
 pub struct Session {
     pub title: String,
-    pub cwd: Option<PathBuf>,
+    cwd: Option<crate::cwd::TerminalCwd>,
+    local_cwd: Option<PathBuf>,
     pub used: bool,
     pub exited: bool,
     pid: Option<u32>,
@@ -140,8 +141,8 @@ impl Session {
         let cols = 80;
         let rows = 24;
         let used = restore.marks_used();
-        let cwd = crate::cwd::usable_cwd(restore.cwd.as_deref());
-        let pty = pty::spawn_shell(cols, rows, f32::from(cell.x) as u32, f32::from(cell.y) as u32, pty_tx, cwd.as_deref())
+        let spawn = crate::cwd::usable_cwd(restore.cwd.as_deref());
+        let pty = pty::spawn_shell(cols, rows, f32::from(cell.x) as u32, f32::from(cell.y) as u32, pty_tx, spawn.as_deref())
             .expect("failed to spawn shell");
         let pid = pty.pid;
 
@@ -193,9 +194,10 @@ impl Session {
                                 cx.emit(SessionEvent::TitleChanged);
                             }
                             Event::Title(_) => {}
-                            Event::Pwd(path) => {
-                                if this.cwd.as_ref() != Some(&path) {
-                                    this.cwd = Some(path);
+                            Event::Pwd(cwd) => {
+                                this.remember_local_cwd();
+                                if this.cwd.as_ref() != Some(&cwd) {
+                                    this.cwd = Some(cwd);
                                     cx.emit(SessionEvent::CwdChanged);
                                 }
                             }
@@ -216,7 +218,8 @@ impl Session {
 
         Self {
             title: format!("Tab {}", index + 1),
-            cwd,
+            cwd: spawn.clone().map(crate::cwd::TerminalCwd::local),
+            local_cwd: spawn,
             used,
             exited: false,
             pid,
@@ -333,12 +336,37 @@ impl Session {
         let _ = self.commands.send(Command::ClearScreen);
     }
 
+    pub fn spawn_cwd(&self) -> Option<PathBuf> {
+        crate::cwd::usable_cwd(self.local_cwd.as_deref()).or_else(|| crate::cwd::usable_local_dir(self.cwd.as_ref()))
+    }
+
+    pub fn cwd_is_remote(&self) -> bool {
+        self.cwd.as_ref().is_some_and(crate::cwd::TerminalCwd::is_remote)
+    }
+
     pub fn refresh_cwd(&mut self) {
+        self.remember_local_cwd();
+        if self.cwd.as_ref().is_some_and(crate::cwd::TerminalCwd::is_remote) {
+            return;
+        }
+        if let Some(path) = self.local_cwd.clone() {
+            self.cwd = Some(crate::cwd::TerminalCwd::local(path));
+        }
+    }
+
+    fn remember_local_cwd(&mut self) {
         let Some(pid) = self.pid else {
             return;
         };
         if let Some(path) = crate::cwd::process_cwd(pid) {
-            self.cwd = Some(path);
+            self.local_cwd = Some(path);
+        }
+    }
+
+    fn can_open(&self, action: &LinkAction) -> bool {
+        match action {
+            LinkAction::OpenUrl(_) => true,
+            LinkAction::OpenFolder(_) => !self.cwd_is_remote(),
         }
     }
 
@@ -401,7 +429,9 @@ impl Session {
                 .pointer_at(event.position)
                 .and_then(|pointer| self.frame.link_at(pointer.row, pointer.col))
             {
-                hit.action.open(cx);
+                if self.can_open(&hit.action) {
+                    hit.action.open(cx);
+                }
                 cx.stop_propagation();
                 return;
             }
@@ -453,7 +483,9 @@ impl Session {
         if !self.cmd_for_links {
             return None;
         }
-        self.hover_cell.and_then(|(row, col)| self.frame.link_at(row, col))
+        self.hover_cell
+            .and_then(|(row, col)| self.frame.link_at(row, col))
+            .filter(|hit| self.can_open(&hit.action))
     }
 
     fn handle_right_click(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -509,7 +541,9 @@ impl Session {
         let Some(menu) = self.link_menu.take() else {
             return;
         };
-        menu.hit.action.open(cx);
+        if self.can_open(&menu.hit.action) {
+            menu.hit.action.open(cx);
+        }
         self.hovered_link = self.current_link_hit();
         cx.notify();
     }
@@ -650,11 +684,14 @@ impl Render for Session {
                 .size_full(),
             )
             .when(self.exited, |el| el.child(exited_banner(colors)))
-            .children(link_menu.map(|menu| link_context_menu(menu, cx)))
+            .children(link_menu.map(|menu| {
+                let can_open = self.can_open(&menu.hit.action);
+                link_context_menu(menu, can_open, cx)
+            }))
     }
 }
 
-fn link_context_menu(menu: LinkMenu, cx: &mut Context<Session>) -> impl IntoElement {
+fn link_context_menu(menu: LinkMenu, can_open: bool, cx: &mut Context<Session>) -> impl IntoElement {
     let open_label = match menu.hit.action {
         LinkAction::OpenUrl(_) => "Open Link",
         LinkAction::OpenFolder(_) => "Open Folder",
@@ -694,7 +731,9 @@ fn link_context_menu(menu: LinkMenu, cx: &mut Context<Session>) -> impl IntoElem
                     .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
                     .child(link_menu_item("link-menu-copy", "Copy", cx, |this, cx| this.copy_link(cx)))
                     .child(link_menu_item("link-menu-paste", "Paste", cx, |this, cx| this.paste_from_menu(cx)))
-                    .child(link_menu_item("link-menu-open", open_label, cx, |this, cx| this.open_from_menu(cx))),
+                    .when(can_open, |el| {
+                        el.child(link_menu_item("link-menu-open", open_label, cx, |this, cx| this.open_from_menu(cx)))
+                    }),
             ),
         )
 }
@@ -829,13 +868,13 @@ fn restore_terminal(
     Ok((Terminal::new(cols, rows)?, false))
 }
 
-fn terminal_cwd(terminal: &Terminal, pid: Option<u32>) -> Option<PathBuf> {
+fn terminal_cwd(terminal: &Terminal, pid: Option<u32>) -> Option<crate::cwd::TerminalCwd> {
     if let Ok(raw) = terminal.pwd() {
-        if let Some(path) = crate::cwd::parse_pwd(raw) {
-            return Some(path);
+        if let Some(cwd) = crate::cwd::parse_pwd(raw) {
+            return Some(cwd);
         }
     }
-    pid.and_then(crate::cwd::process_cwd)
+    pid.and_then(crate::cwd::process_cwd).map(crate::cwd::TerminalCwd::local)
 }
 
 fn start_emulator(
@@ -930,7 +969,7 @@ fn run_emulator(
     let mut release_event = ReleaseEvent::new()?;
     let started = Instant::now();
     let mut last_title = String::new();
-    let mut last_cwd: Option<PathBuf> = None;
+    let mut last_cwd: Option<crate::cwd::TerminalCwd> = None;
     let mut encoded = Vec::new();
 
     while let Ok(command) = commands.recv() {

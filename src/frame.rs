@@ -628,8 +628,8 @@ fn folder_from_raw(raw: &str) -> Option<PathBuf> {
 }
 
 fn expand_user_path(raw: &str) -> Option<PathBuf> {
-    if let Some(rest) = raw.strip_prefix("file:") {
-        return parse_file_uri_rest(rest);
+    if raw.starts_with("file:") {
+        return crate::cwd::parse_pwd(raw).filter(|cwd| !cwd.is_remote()).map(|cwd| cwd.path);
     }
     if raw == "~" {
         return crate::pty::home_dir();
@@ -643,45 +643,6 @@ fn expand_user_path(raw: &str) -> Option<PathBuf> {
         return Some(PathBuf::from(raw));
     }
     std::env::current_dir().ok().map(|cwd| cwd.join(raw))
-}
-
-fn parse_file_uri_rest(rest: &str) -> Option<PathBuf> {
-    let path = if let Some(rest) = rest.strip_prefix("//") {
-        let slash = rest.find('/')?;
-        let (auth, path) = rest.split_at(slash);
-        if !auth.is_empty() && !auth.eq_ignore_ascii_case("localhost") {
-            return None;
-        }
-        path
-    } else {
-        rest
-    };
-    let decoded = percent_decode(path);
-    if decoded.is_empty() {
-        return None;
-    }
-    Some(PathBuf::from(decoded))
-}
-
-fn percent_decode(input: &str) -> String {
-    let bytes = input.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Some(value) = std::str::from_utf8(&bytes[i + 1..i + 3])
-                .ok()
-                .and_then(|hex| u8::from_str_radix(hex, 16).ok())
-            {
-                out.push(value);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
 }
 
 pub fn paint(
