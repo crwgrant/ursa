@@ -306,6 +306,23 @@ impl WorkspaceLayout {
     fn tab_cwd_paths(&self) -> Vec<Option<PathBuf>> {
         self.sessions.iter().flat_map(|session| session.cwds.clone()).collect()
     }
+
+    pub fn into_single_session(self) -> Self {
+        let session = self
+            .sessions
+            .get(self.active_session)
+            .cloned()
+            .or_else(|| self.sessions.first().cloned())
+            .unwrap_or_else(|| SessionLayout {
+                tabs: 1,
+                active: 0,
+                cwds: vec![None],
+            });
+        Self {
+            sessions: vec![session],
+            active_session: 0,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -378,6 +395,47 @@ impl OnExit {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SessionSidebar {
+    #[default]
+    On,
+    Off,
+}
+
+impl SessionSidebar {
+    pub fn as_bool(self) -> bool {
+        matches!(self, Self::On)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::On => "On",
+            Self::Off => "Off",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "on" | "true" | "yes" | "show" | "1" => Some(Self::On),
+            "off" | "false" | "no" | "hide" | "0" => Some(Self::Off),
+            _ => None,
+        }
+    }
+
+    pub fn from_toml(value: &toml::Value) -> Option<Self> {
+        match value {
+            toml::Value::Boolean(true) => Some(Self::On),
+            toml::Value::Boolean(false) => Some(Self::Off),
+            toml::Value::String(text) => Self::parse(text),
+            _ => None,
+        }
+    }
+
+    pub fn all() -> [Self; 2] {
+        [Self::On, Self::Off]
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
     pub font_family: Option<String>,
@@ -385,6 +443,7 @@ pub struct Config {
     pub scrollback_lines: u32,
     pub cursor_shape: CursorShape,
     pub on_exit: OnExit,
+    pub session_sidebar: SessionSidebar,
     pub theme: String,
     pub themes_file: String,
 }
@@ -397,6 +456,7 @@ impl Default for Config {
             scrollback_lines: DEFAULT_SCROLLBACK,
             cursor_shape: CursorShape::Bar,
             on_exit: OnExit::Close,
+            session_sidebar: SessionSidebar::On,
             theme: theme::DEFAULT_THEME.to_string(),
             themes_file: theme::DEFAULT_THEMES_FILE.to_string(),
         }
@@ -463,12 +523,15 @@ scrollback_lines = {scrollback}
 cursor = {cursor}
 # Keep sessions across relaunch (and keep a tab open if its shell exits), or close them.
 on_exit = {on_exit}
+# Show the session sidebar (on) or use horizontal tabs only (off).
+sessions = {sessions}
 ",
             theme = toml_string(&self.theme),
             themes = toml_string(&self.themes_file),
             scrollback = self.scrollback_lines,
             cursor = toml_string(self.cursor_shape.as_str()),
             on_exit = toml_string(self.on_exit.as_str()),
+            sessions = self.session_sidebar.as_bool(),
         )
     }
 
@@ -503,6 +566,7 @@ struct TerminalSection {
     scrollback_lines: Option<u32>,
     cursor: Option<String>,
     on_exit: Option<String>,
+    sessions: Option<toml::Value>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -576,6 +640,10 @@ pub fn keep_tab_on_exit(cx: &App) -> bool {
 
 pub fn persist_sessions(cx: &App) -> bool {
     current(cx).on_exit == OnExit::Keep
+}
+
+pub fn sessions_enabled(cx: &App) -> bool {
+    current(cx).session_sidebar.as_bool()
 }
 
 pub fn path(cx: &App) -> PathBuf {
@@ -655,6 +723,12 @@ pub fn parse(text: &str) -> Result<Config, String> {
             .and_then(CursorShape::parse)
             .unwrap_or_default(),
         on_exit: file.terminal.on_exit.as_deref().and_then(OnExit::parse).unwrap_or_default(),
+        session_sidebar: file
+            .terminal
+            .sessions
+            .as_ref()
+            .and_then(SessionSidebar::from_toml)
+            .unwrap_or_default(),
         theme: file
             .appearance
             .theme
@@ -1338,6 +1412,7 @@ mod tests {
         assert_eq!(config.scrollback_lines, 8000);
         assert_eq!(config.cursor_shape, CursorShape::Bar);
         assert_eq!(config.on_exit, OnExit::Close);
+        assert_eq!(config.session_sidebar, SessionSidebar::On);
         assert_eq!(config.theme, "nord");
         assert_eq!(config.themes_file, theme::DEFAULT_THEMES_FILE);
     }
@@ -1376,6 +1451,7 @@ mod tests {
             scrollback_lines: 4000,
             cursor_shape: CursorShape::Bar,
             on_exit: OnExit::Keep,
+            session_sidebar: SessionSidebar::Off,
             theme: "catppuccin-mocha".into(),
             themes_file: "palettes.toml".into(),
         };
@@ -1385,6 +1461,7 @@ mod tests {
         assert_eq!(again.scrollback_lines, 4000);
         assert_eq!(again.cursor_shape, CursorShape::Bar);
         assert_eq!(again.on_exit, OnExit::Keep);
+        assert_eq!(again.session_sidebar, SessionSidebar::Off);
         assert_eq!(again.theme, "catppuccin-mocha");
         assert_eq!(again.themes_file, "palettes.toml");
     }
@@ -1449,6 +1526,15 @@ mod tests {
     }
 
     #[test]
+    fn parse_session_sidebar_bool_and_aliases() {
+        assert_eq!(parse("[terminal]\nsessions = false\n").unwrap().session_sidebar, SessionSidebar::Off);
+        assert_eq!(parse("[terminal]\nsessions = true\n").unwrap().session_sidebar, SessionSidebar::On);
+        assert_eq!(parse("[terminal]\nsessions = \"off\"\n").unwrap().session_sidebar, SessionSidebar::Off);
+        assert_eq!(parse("[terminal]\nsessions = \"hide\"\n").unwrap().session_sidebar, SessionSidebar::Off);
+        assert_eq!(parse("[terminal]\n").unwrap().session_sidebar, SessionSidebar::On);
+    }
+
+    #[test]
     fn parse_theme_from_appearance_or_top_level() {
         assert_eq!(parse("[appearance]\ntheme = \"gruvbox-dark\"\n").unwrap().theme, "gruvbox-dark");
         assert_eq!(parse("theme = \"solarized-light\"\n").unwrap().theme, "solarized-light");
@@ -1509,6 +1595,10 @@ mod tests {
         assert_eq!(layout.sessions[0].cwds, vec![None]);
         assert_eq!(layout.sessions[1].tabs, WORKSPACE_MAX_TABS);
         assert_eq!(layout.active_session, 1);
+        let single = layout.into_single_session();
+        assert_eq!(single.sessions.len(), 1);
+        assert_eq!(single.sessions[0].tabs, WORKSPACE_MAX_TABS);
+        assert_eq!(single.active_session, 0);
     }
 
     #[test]

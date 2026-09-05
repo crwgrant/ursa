@@ -151,15 +151,26 @@ impl Workspace {
         } else {
             config::WorkspaceLayout::default()
         };
+        let snapshot_session = if config::sessions_enabled(cx) {
+            None
+        } else {
+            Some(layout.active_session)
+        };
+        let layout = if config::sessions_enabled(cx) {
+            layout
+        } else {
+            layout.into_single_session()
+        };
         let sessions = layout
             .sessions
             .iter()
             .enumerate()
             .map(|(session_index, spec)| {
+                let snapshot_session = snapshot_session.unwrap_or(session_index);
                 let restores = (0..spec.tabs)
                     .map(|tab| TabRestore {
                         cwd: spec.cwds.get(tab).cloned().flatten(),
-                        snapshot: config::read_tab_snapshot(session_index, tab),
+                        snapshot: config::read_tab_snapshot(snapshot_session, tab),
                     })
                     .collect();
                 SessionGroup::spawn_tabs(spec.tabs, spec.active, restores, window, cx)
@@ -179,6 +190,8 @@ impl Workspace {
         cx.observe_global::<notify::Notifications>(|_, cx| cx.notify()).detach();
         cx.observe_global::<config::AppSettings>(|this, cx| {
             this.apply_config(cx);
+            this.sync_session_sidebar(cx);
+            apply_app_menus(cx);
             if config::persist_sessions(cx) {
                 this.persist_layout(cx);
             } else {
@@ -227,6 +240,9 @@ impl Workspace {
     }
 
     fn add_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !config::sessions_enabled(cx) {
+            return;
+        }
         let index = self.sessions.len();
         let group = SessionGroup::spawn(window, cx);
         self.sessions.push(group);
@@ -252,6 +268,9 @@ impl Workspace {
     }
 
     fn select_session(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if !config::sessions_enabled(cx) {
+            return;
+        }
         if index < self.sessions.len() {
             self.active_session = index;
             self.focus_active(window, cx);
@@ -328,6 +347,9 @@ impl Workspace {
     }
 
     fn close_active_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !config::sessions_enabled(cx) {
+            return;
+        }
         self.close_session(self.active_session, window, cx);
     }
 
@@ -365,6 +387,16 @@ impl Workspace {
                 tab.update(cx, |session, cx| session.apply_config(cx));
             }
         }
+    }
+
+    fn sync_session_sidebar(&mut self, cx: &mut Context<Self>) {
+        if config::sessions_enabled(cx) || self.sessions.len() <= 1 {
+            return;
+        }
+        let active = self.active_session.min(self.sessions.len().saturating_sub(1));
+        let group = self.sessions.remove(active);
+        self.sessions = vec![group];
+        self.active_session = 0;
     }
 
     fn set_sidebar_width(&mut self, width: f32, window: &Window, persist: bool, cx: &mut Context<Self>) {
@@ -454,6 +486,11 @@ impl Workspace {
             })
             .collect::<Vec<_>>();
         let layout = config::WorkspaceLayout::from_workspace(&sessions, self.active_session);
+        let layout = if config::sessions_enabled(cx) {
+            layout
+        } else {
+            layout.into_single_session()
+        };
         config::save_workspace_layout(layout.clone());
         for (session_index, group) in self.sessions.iter().enumerate() {
             for (tab_index, tab) in group.tabs.iter().enumerate() {
@@ -531,8 +568,9 @@ impl Render for Workspace {
             })
             .on_action(cx.listener(|this, _: &ClearScreen, _window, cx| this.clear_active(cx)))
             .on_action(|_: &OpenSettings, _window, cx| crate::settings::open(cx))
-            .child(self.render_sidebar(&tabs, cx))
-            .child(self.render_split(cx))
+            .when(config::sessions_enabled(cx), |workspace| {
+                workspace.child(self.render_sidebar(&tabs, cx)).child(self.render_split(cx))
+            })
             .child(self.render_terminal(cx))
             .child(notify::overlay(cx))
     }
@@ -647,6 +685,7 @@ impl Workspace {
             .flex_shrink_0()
             .bg(rgb(colors.window))
             .overflow_x_scroll()
+            .when(!config::sessions_enabled(cx), |bar| bar.child(pane_settings_button(cx)))
             .children(tabs.iter().enumerate().map(|(position, (index, title, selected))| {
                 pane_tab(*index, title.clone(), *selected, position + 1 < tabs.len(), cx)
             }))
@@ -768,6 +807,29 @@ fn new_tab_button(cx: &mut Context<Workspace>) -> impl IntoElement {
         .tooltip(action_tooltip("New Session", new_session_shortcut()))
         .child("+")
         .on_mouse_down(MouseButton::Left, cx.listener(|this, _event, window, cx| this.add_session(window, cx)))
+}
+
+fn pane_settings_button(cx: &mut Context<Workspace>) -> impl IntoElement {
+    let colors = theme::colors(cx);
+    div()
+        .id("pane-settings")
+        .h_full()
+        .px_3()
+        .flex()
+        .items_center()
+        .justify_center()
+        .border_b_1()
+        .border_color(rgb(colors.sidebar_border))
+        .text_sm()
+        .text_color(rgb(colors.text_dim))
+        .cursor_pointer()
+        .hover(move |style| style.bg(rgb(colors.tab_hover)).text_color(rgb(colors.text)))
+        .tooltip(action_tooltip("Settings", settings_shortcut()))
+        .child("Settings")
+        .on_mouse_down(MouseButton::Left, |_, _, cx| {
+            crate::settings::open(cx);
+            cx.stop_propagation();
+        })
 }
 
 fn new_pane_tab_button(cx: &mut Context<Workspace>) -> impl IntoElement {
@@ -1092,24 +1154,69 @@ fn settings_shortcut() -> &'static str {
     if cfg!(target_os = "macos") { "⌘," } else { "Ctrl+," }
 }
 
-fn view_menu() -> Menu {
-    let mut items = vec![
-        MenuItem::action("Clear Screen", ClearScreen),
-        MenuItem::separator(),
-        MenuItem::action("Close Session", CloseSession),
-        MenuItem::separator(),
-    ];
+fn view_menu(sessions_enabled: bool) -> Menu {
+    let mut items = vec![MenuItem::action("Clear Screen", ClearScreen), MenuItem::separator()];
+    if sessions_enabled {
+        items.push(MenuItem::action("Close Session", CloseSession));
+        items.push(MenuItem::separator());
+    }
     for number in 1..=9 {
         items.push(MenuItem::action(format!("Tab {number}"), ActivateTab { index: number - 1 }));
     }
-    items.push(MenuItem::separator());
-    for number in 1..=9 {
-        items.push(MenuItem::action(format!("Session {number}"), ActivateSession { index: number - 1 }));
+    if sessions_enabled {
+        items.push(MenuItem::separator());
+        for number in 1..=9 {
+            items.push(MenuItem::action(format!("Session {number}"), ActivateSession { index: number - 1 }));
+        }
     }
     Menu {
         name: "View".into(),
         items,
     }
+}
+
+fn file_menu(sessions_enabled: bool) -> Menu {
+    let mut items = vec![MenuItem::action("New Window", NewWindow)];
+    if sessions_enabled {
+        items.push(MenuItem::action("New Session", NewSession));
+    }
+    items.push(MenuItem::action("New Tab", NewTab));
+    items.push(MenuItem::separator());
+    items.push(MenuItem::action("Close Tab", CloseTab));
+    if sessions_enabled {
+        items.push(MenuItem::action("Close Session", CloseSession));
+    }
+    Menu {
+        name: "File".into(),
+        items,
+    }
+}
+
+fn app_menus(sessions_enabled: bool) -> Vec<Menu> {
+    vec![
+        Menu {
+            name: "Ghostterm".into(),
+            items: vec![
+                MenuItem::action("Settings…", OpenSettings),
+                MenuItem::separator(),
+                MenuItem::action("Quit Ghostterm", Quit),
+            ],
+        },
+        file_menu(sessions_enabled),
+        Menu {
+            name: "Edit".into(),
+            items: vec![MenuItem::action("Copy", Copy), MenuItem::action("Paste", Paste)],
+        },
+        view_menu(sessions_enabled),
+        Menu {
+            name: "Window".into(),
+            items: vec![MenuItem::action("Close", CloseTab)],
+        },
+    ]
+}
+
+fn apply_app_menus(cx: &mut App) {
+    cx.set_menus(app_menus(config::sessions_enabled(cx)));
 }
 
 fn workspace_key_bindings() -> Vec<KeyBinding> {
@@ -1162,36 +1269,7 @@ fn main() {
         });
         cx.on_action(|_: &OpenSettings, cx| settings::open(cx));
         cx.bind_keys(workspace_key_bindings());
-        cx.set_menus(vec![
-            Menu {
-                name: "Ghostterm".into(),
-                items: vec![
-                    MenuItem::action("Settings…", OpenSettings),
-                    MenuItem::separator(),
-                    MenuItem::action("Quit Ghostterm", Quit),
-                ],
-            },
-            Menu {
-                name: "File".into(),
-                items: vec![
-                    MenuItem::action("New Window", NewWindow),
-                    MenuItem::action("New Session", NewSession),
-                    MenuItem::action("New Tab", NewTab),
-                    MenuItem::separator(),
-                    MenuItem::action("Close Tab", CloseTab),
-                    MenuItem::action("Close Session", CloseSession),
-                ],
-            },
-            Menu {
-                name: "Edit".into(),
-                items: vec![MenuItem::action("Copy", Copy), MenuItem::action("Paste", Paste)],
-            },
-            view_menu(),
-            Menu {
-                name: "Window".into(),
-                items: vec![MenuItem::action("Close", CloseTab)],
-            },
-        ]);
+        apply_app_menus(cx);
         cx.set_dock_menu(vec![MenuItem::action("New Window", NewWindow)]);
 
         open_workspace_window(cx);

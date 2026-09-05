@@ -21,6 +21,7 @@ enum MenuKind {
     FontSize,
     Cursor,
     OnExit,
+    SessionSidebar,
     Theme,
 }
 
@@ -92,6 +93,14 @@ impl SettingsPage {
     fn select_on_exit(&mut self, on_exit: config::OnExit, cx: &mut Context<Self>) {
         config::update(cx, |config| {
             config.on_exit = on_exit;
+        });
+        self.open_menu = None;
+        cx.notify();
+    }
+
+    fn select_session_sidebar(&mut self, session_sidebar: config::SessionSidebar, cx: &mut Context<Self>) {
+        config::update(cx, |config| {
+            config.session_sidebar = session_sidebar;
         });
         self.open_menu = None;
         cx.notify();
@@ -181,6 +190,7 @@ impl Render for SettingsPage {
         let font_size = config.font_size;
         let cursor_shape = config.cursor_shape;
         let on_exit = config.on_exit;
+        let session_sidebar = config.session_sidebar;
         let app_theme = config.theme;
         let path = config::display_path(cx);
         let error = config::load_error(cx);
@@ -249,6 +259,22 @@ impl Render for SettingsPage {
                     .collect();
                 dropdown_overlay("on-exit-menu", position, items, cx).into_any_element()
             }
+            MenuKind::SessionSidebar => {
+                let items: Vec<_> = config::SessionSidebar::all()
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, option)| {
+                        dropdown_item(
+                            ("session-sidebar-choice", index).into(),
+                            option.label().to_string(),
+                            option == session_sidebar,
+                            cx,
+                            move |this, cx| this.select_session_sidebar(option, cx),
+                        )
+                    })
+                    .collect();
+                dropdown_overlay("session-sidebar-menu", position, items, cx).into_any_element()
+            }
             MenuKind::Theme => {
                 let items: Vec<_> = theme::choices(cx)
                     .into_iter()
@@ -291,6 +317,7 @@ impl Render for SettingsPage {
                     .child(section_label("Terminal", colors))
                     .child(cursor_row(cursor_shape, cx))
                     .child(on_exit_row(on_exit, cx))
+                    .child(session_sidebar_row(session_sidebar, cx))
                     .child(scrollback_row(self.scrollback.clone(), colors))
                     .child(section_label("Config file", colors))
                     .child(div().text_xs().text_color(rgb(colors.text_dim)).child(path))
@@ -361,6 +388,16 @@ fn cursor_row(shape: config::CursorShape, cx: &mut Context<SettingsPage>) -> imp
 
 fn on_exit_row(on_exit: config::OnExit, cx: &mut Context<SettingsPage>) -> impl IntoElement {
     dropdown_row("on-exit", "Sessions", on_exit.label().to_string(), MenuKind::OnExit, cx)
+}
+
+fn session_sidebar_row(session_sidebar: config::SessionSidebar, cx: &mut Context<SettingsPage>) -> impl IntoElement {
+    dropdown_row(
+        "session-sidebar",
+        "Session sidebar",
+        session_sidebar.label().to_string(),
+        MenuKind::SessionSidebar,
+        cx,
+    )
 }
 
 fn theme_row(app_theme: String, cx: &mut Context<SettingsPage>) -> impl IntoElement {
