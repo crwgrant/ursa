@@ -1,10 +1,11 @@
 # Ghostterm
 
-A terminal emulator built in Rust with [GPUI](https://github.com/zed-industries/zed) and [libghostty-vt](https://github.com/uzaaft/libghostty-rs). Each window has a left sidebar of sessions (tabs) and a terminal that talks to your login shell over a PTY.
+A terminal emulator built in Rust with [GPUI](https://github.com/zed-industries/zed) and [libghostty-vt](https://github.com/uzaaft/libghostty-rs). Each window has a left sidebar of sessions; each session has horizontal tabs and a terminal that talks to your login shell over a PTY.
 
 ## Features
 
-- Tabbed sessions in a left sidebar: add with **⌘T** or the **+** button, close with **⌘W** or **×**; drag tabs to reorder; drag the right edge to resize, double-click to reset
+- Sessions in a left sidebar: add with **⌘⇧T** or the **+** button, close with **×**, drag to reorder; drag the right edge to resize, double-click to reset
+- Horizontal tabs per session: add with **⌘T** or the tab-bar **+**, close with **⌘W** or **×**
 - Mouse selection: click-drag, double-click a word, triple-click a line, Option-drag for a block
 - Line and word movement: **⌘← / ⌘→** jump to the start or end of the line; **⌥← / ⌥→** move by word
 - Delete by word and line: **⌥⌫** / **⌥⌦** kill the previous or next word; **⌘⌫** / **⌘⌦** kill to the start or end of the line
@@ -14,8 +15,8 @@ A terminal emulator built in Rust with [GPUI](https://github.com/zed-industries/
 - In-app toasts for copy and paste feedback (bottom-right, click or wait to dismiss)
 - **⌘K** clears the screen and scrollback; the shell redraws the prompt at the top
 - Settings window (**⌘,** or **Ghostterm → Settings**) for theme, font family, size, cursor style, and scrollback; values are stored in a Ghostterm-owned config file you can also edit by hand
-- New window with **⌘N** or **File → New Window**; closing the last tab leaves the app running so a Dock click (or ⌘N) can open another
-- Typing `exit` in the top-level shell closes that tab; the last tab closes the window without quitting the app
+- New window with **⌘N** or **File → New Window**; closing the last session leaves the app running so a Dock click (or ⌘N) can open another
+- Typing `exit` in the top-level shell closes that tab; the last tab in a session closes the session; the last session closes the window without quitting the app
 
 ## Requirements
 
@@ -39,6 +40,7 @@ The window title is **Ghostterm**. On macOS, `$SHELL` is used when present (othe
 | Action | Shortcut |
 | --- | --- |
 | New window | ⌘N |
+| New session | ⌘⇧T |
 | New tab | ⌘T |
 | Close tab | ⌘W |
 | Quit | ⌘Q |
@@ -53,7 +55,7 @@ The window title is **Ghostterm**. On macOS, `$SHELL` is used when present (othe
 | Clear screen | ⌘K |
 | Settings | ⌘, |
 
-On Windows, use **Ctrl+Shift** in place of **⌘** (for example **Ctrl+Shift+T** for a new tab, **Ctrl+Shift+C** / **Ctrl+Shift+V** to copy and paste). **Ctrl+C** still goes to the shell. Settings is **Ctrl+,**.
+On Windows, use **Ctrl+Shift** in place of **⌘** (for example **Ctrl+Shift+T** for a new tab, **Ctrl+Alt+T** for a new session, **Ctrl+Shift+C** / **Ctrl+Shift+V** to copy and paste). **Ctrl+C** still goes to the shell. Settings is **Ctrl+,**.
 
 ## Configuration
 
@@ -108,7 +110,7 @@ The Settings window writes `config.toml` when you change a value. Editing the co
 ### Window and sessions
 
 - [x] New window (⌘N), including reopen from the Dock when no windows are open
-- [ ] Horizontal tabs for each session
+- [x] Horizontal tabs for each session
 - [x] Remember window position and size across launches
 - [x] Draggable split to resize the tab sidebar vs the terminal
 - [x] Drag to reorder tabs in the sidebar
@@ -147,7 +149,7 @@ Config parse/round-trip tests live in `src/config.rs` (`cargo test`). A broader 
 - Shift-produced characters (`:@#!` and the rest of the punctuation set) encode to the PTY
 - ⌘← / ⌘→ send beginning/end of line; ⌥← / ⌥→ send word jumps
 - ⌥⌫ / ⌥⌦ send word-kill; ⌘⌫ / ⌘⌦ send kill to start/end of line
-- Reserved shortcuts (⌘Q / ⌘T / ⌘W / ⌘,) are not forwarded as terminal keys
+- Reserved shortcuts (⌘Q / ⌘⇧T / ⌘T / ⌘W / ⌘,) are not forwarded as terminal keys
 
 ### Links and paths
 
@@ -159,9 +161,9 @@ Config parse/round-trip tests live in `src/config.rs` (`cargo test`). A broader 
 ### Sessions and window
 
 - Top-level shell exit closes that tab
-- Last tab closes the window without quitting the app
+- Last tab in a session closes the session; last session closes the window without quitting the app
 - Nested `exit` (subshell) does not close the tab
-- Adding and closing tabs updates the active index
+- Adding and closing sessions and tabs updates the active index
 - ⌘N opens another window; Dock click with no windows opens one too
 
 ### Terminal surface

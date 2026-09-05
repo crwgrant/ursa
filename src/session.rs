@@ -73,6 +73,7 @@ enum Event {
 
 pub enum SessionEvent {
     Exited,
+    TitleChanged,
 }
 
 pub struct Session {
@@ -146,7 +147,10 @@ impl Session {
                                 this.frame = frame;
                                 this.recompute_hovered_link();
                             }
-                            Event::Title(title) if !title.is_empty() => this.title = title,
+                            Event::Title(title) if !title.is_empty() => {
+                                this.title = title;
+                                cx.emit(SessionEvent::TitleChanged);
+                            }
                             Event::Title(_) => {}
                             Event::Exited => cx.emit(SessionEvent::Exited),
                         }
@@ -587,6 +591,9 @@ fn reserved_shortcut(modifiers: &gpui::Modifiers, key: &str) -> bool {
         return true;
     }
     if modifiers.control && modifiers.shift && matches!(key, "t" | "w" | "c" | "v") {
+        return true;
+    }
+    if modifiers.control && modifiers.alt && key == "t" {
         return true;
     }
     modifiers.control && matches!(key, ",")
