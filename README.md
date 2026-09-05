@@ -148,7 +148,6 @@ The Settings window writes `config.toml` when you change a value. Editing the co
 
 - [ ] IME / composed input (accents, CJK, dead keys)
 - [ ] Find in scrollback (⌘F)
-- [x] Split panes per tab
 - [x] Equalize split sizes
 - [x] Restore the local working directory of each tab (OSC 7 when the shell sends it, otherwise the process cwd)
 - [ ] Zoom the focused pane
