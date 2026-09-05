@@ -26,11 +26,11 @@ A native terminal with a reliable bearing, built in Rust with [GPUI](https://git
 
 ## Requirements
 
-- macOS or Windows
+- macOS, Windows, or Linux
 - [Rust](https://rustup.rs/) (stable)
 - [Zig](https://ziglang.org/) for the libghostty-vt build
 - On macOS, [Xcode](https://developer.apple.com/xcode/) (not only Command Line Tools) so GPUI can compile Metal shaders
-- [cargo-packager](https://crates.io/crates/cargo-packager) if you want a packaged app (`cargo install cargo-packager --locked`): a `.app` / `.dmg` on macOS, or an NSIS installer on Windows
+- [cargo-packager](https://crates.io/crates/cargo-packager) if you want a packaged app (`cargo install cargo-packager --locked`): a `.app` / `.dmg` on macOS, an NSIS installer on Windows, or a `.deb` / `.AppImage` on Linux
 
 The repo’s `.cargo/config.toml` sets `DEVELOPER_DIR` to `/Applications/Xcode.app/Contents/Developer` when it is not already set.
 
@@ -79,6 +79,32 @@ The packager downloads NSIS on first run; you do not need to install NSIS yourse
 ```
 
 Windows SmartScreen will warn on an unsigned installer. Signing is still on the [Windows roadmap](#windows).
+
+## Package (Linux)
+
+This builds a release `Ursa` binary and wraps it as a `.deb` and an [AppImage](https://appimage.org/). The AppImage is the portable option on Arch and CachyOS; the `.deb` is for Debian-based distros.
+
+```bash
+NO_STRIP=true cargo packager --release
+```
+
+`NO_STRIP=true` is required on Arch and CachyOS: linuxdeploy’s bundled `strip` cannot read current system libraries (`.relr.dyn`). It is harmless on other distros. The command still runs `cargo build --release` first (`before-packaging-command` in `Cargo.toml`). Both packages land under `target/release`. You can also run `target/release/Ursa` without installing.
+
+New shells drop AppImage variables such as `PYTHONHOME` and `APPDIR`, so tools that use the system Python (VapourSynth, etc.) do not look inside the AppImage mount.
+
+Install the packager once if you have not already:
+
+```bash
+cargo install cargo-packager --locked
+```
+
+The `.desktop` file uses `Categories=System;TerminalEmulator;` so KDE puts Ursa with other terminals instead of **Lost & Found**.
+
+cargo-packager only uses **PNG** icons on Linux (it skips `.icns` and `.ico`). If you change the PNG sources, regenerate the freedesktop sizes (Python and Pillow; on Arch, `pacman -S python-pillow`):
+
+```bash
+./packaging/make-linux-icons.sh
+```
 
 ## Shortcuts
 

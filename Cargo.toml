@@ -15,7 +15,11 @@ path = "src/main.rs"
 product-name = "Ursa"
 identifier = "com.crwgrant.ursa"
 before-packaging-command = "cargo build --release"
-icons = ["packaging/AppIcon.icns", "packaging/AppIcon.ico"]
+category = "Developer Tool"
+icons = ["packaging/AppIcon.icns", "packaging/AppIcon.ico", "packaging/linux/*.png"]
+
+[package.metadata.packager.deb]
+desktop-template = "packaging/linux/ursa.desktop"
 
 [package.metadata.packager.macos]
 minimum-system-version = "15.0"
