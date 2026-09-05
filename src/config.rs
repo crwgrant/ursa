@@ -4,7 +4,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use gpui::{App, Global, SharedString, Timer};
+use gpui::{App, Bounds, DisplayId, Global, Pixels, SharedString, Timer, point, px, size};
 use serde::Deserialize;
 
 use crate::{notify, pty, theme};
@@ -14,6 +14,82 @@ pub const FONT_SIZE_MIN: f32 = 8.0;
 pub const FONT_SIZE_MAX: f32 = 48.0;
 pub const SCROLLBACK_MIN: u32 = 100;
 pub const SCROLLBACK_MAX: u32 = 100_000;
+pub const WINDOW_MIN_WIDTH: f32 = 640.0;
+pub const WINDOW_MIN_HEIGHT: f32 = 400.0;
+const WINDOW_STATE_FILE: &str = "window.toml";
+
+static LAST_WINDOW_FRAME: Mutex<Option<WindowFrame>> = Mutex::new(None);
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct WindowFrame {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub display: Option<String>,
+}
+
+impl WindowFrame {
+    fn from_window(window: &gpui::Window, cx: &App) -> Self {
+        let bounds = window.window_bounds().get_bounds();
+        Self {
+            x: f32::from(bounds.origin.x),
+            y: f32::from(bounds.origin.y),
+            width: f32::from(bounds.size.width),
+            height: f32::from(bounds.size.height),
+            display: window
+                .display(cx)
+                .and_then(|display| display.uuid().ok())
+                .map(|id| id.to_string()),
+        }
+    }
+
+    fn to_bounds(&self) -> Bounds<Pixels> {
+        Bounds {
+            origin: point(px(self.x), px(self.y)),
+            size: size(px(self.width), px(self.height)),
+        }
+    }
+
+    fn sanitized(self) -> Option<Self> {
+        if ![self.x, self.y, self.width, self.height].into_iter().all(f32::is_finite) {
+            return None;
+        }
+        let display = self
+            .display
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        Some(Self {
+            x: self.x,
+            y: self.y,
+            width: self.width.max(WINDOW_MIN_WIDTH),
+            height: self.height.max(WINDOW_MIN_HEIGHT),
+            display,
+        })
+    }
+
+    fn render(&self) -> String {
+        let display = self
+            .display
+            .as_deref()
+            .map(|id| format!("display = {}\n", toml_string(id)))
+            .unwrap_or_default();
+        format!(
+            "\
+# Last Ghostterm window position and size. Updated when you move or resize the window.
+# `display` is the monitor UUID so the window reopens on the same screen.
+x = {x}
+y = {y}
+width = {width}
+height = {height}
+{display}",
+            x = format_number(self.x),
+            y = format_number(self.y),
+            width = format_number(self.width),
+            height = format_number(self.height),
+        )
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CursorShape {
@@ -404,6 +480,117 @@ pub fn config_path() -> Option<PathBuf> {
     config_dir().map(|dir| dir.join("config.toml"))
 }
 
+pub fn save_window_state(window: &gpui::Window, cx: &App) {
+    let Some(frame) = WindowFrame::from_window(window, cx).sanitized() else {
+        return;
+    };
+    if let Ok(mut last) = LAST_WINDOW_FRAME.lock() {
+        if last.as_ref() == Some(&frame) {
+            return;
+        }
+        *last = Some(frame.clone());
+    }
+    let path = window_state_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(path, frame.render());
+}
+
+pub fn restored_window(cx: &App) -> Option<(Bounds<Pixels>, Option<DisplayId>)> {
+    let frame = load_window_frame()?;
+    if let Ok(mut last) = LAST_WINDOW_FRAME.lock() {
+        *last = Some(frame.clone());
+    }
+    let display_id = frame.display.as_deref().and_then(|uuid| display_id_for_uuid(cx, uuid));
+    let bounds = match display_id.and_then(|id| cx.find_display(id)) {
+        Some(display) => clamp_to_display(frame.to_bounds(), display.bounds()),
+        None => clamp_window_bounds(frame.to_bounds(), cx),
+    };
+    Some((bounds, display_id))
+}
+
+fn window_state_path() -> PathBuf {
+    config_dir()
+        .map(|dir| dir.join(WINDOW_STATE_FILE))
+        .unwrap_or_else(|| PathBuf::from(WINDOW_STATE_FILE))
+}
+
+fn load_window_frame() -> Option<WindowFrame> {
+    let text = std::fs::read_to_string(window_state_path()).ok()?;
+    parse_window_frame(&text)
+}
+
+fn parse_window_frame(text: &str) -> Option<WindowFrame> {
+    let file: WindowFile = toml::from_str(text).ok()?;
+    WindowFrame {
+        x: file.x?,
+        y: file.y?,
+        width: file.width?,
+        height: file.height?,
+        display: file.display,
+    }
+    .sanitized()
+}
+
+fn display_id_for_uuid(cx: &App, uuid: &str) -> Option<DisplayId> {
+    cx.displays().into_iter().find_map(|display| {
+        display
+            .uuid()
+            .ok()
+            .filter(|id| id.to_string().eq_ignore_ascii_case(uuid))
+            .map(|_| display.id())
+    })
+}
+
+fn clamp_to_display(bounds: Bounds<Pixels>, display: Bounds<Pixels>) -> Bounds<Pixels> {
+    let min = size(px(WINDOW_MIN_WIDTH), px(WINDOW_MIN_HEIGHT));
+    let width = bounds.size.width.max(min.width).min(display.size.width.max(min.width));
+    let height = bounds.size.height.max(min.height).min(display.size.height.max(min.height));
+    let local_display = Bounds {
+        origin: point(px(0.0), px(0.0)),
+        size: display.size,
+    };
+    let bounds = Bounds {
+        origin: bounds.origin,
+        size: size(width, height),
+    };
+    if is_usable_on_display(&bounds, &local_display) {
+        bounds
+    } else {
+        Bounds::centered_at(local_display.center(), bounds.size)
+    }
+}
+
+fn clamp_window_bounds(bounds: Bounds<Pixels>, cx: &App) -> Bounds<Pixels> {
+    let min = size(px(WINDOW_MIN_WIDTH), px(WINDOW_MIN_HEIGHT));
+    let width = bounds.size.width.max(min.width);
+    let height = bounds.size.height.max(min.height);
+    let bounds = Bounds {
+        origin: bounds.origin,
+        size: size(width, height),
+    };
+    let displays: Vec<_> = cx.displays().into_iter().map(|display| display.bounds()).collect();
+    if displays.is_empty() || displays.iter().any(|display| is_usable_on_display(&bounds, display)) {
+        return bounds;
+    }
+    Bounds::centered(None, bounds.size, cx)
+}
+
+fn is_usable_on_display(bounds: &Bounds<Pixels>, display: &Bounds<Pixels>) -> bool {
+    let hit = bounds.intersect(display);
+    f32::from(hit.size.width) >= 80.0 && f32::from(hit.size.height) >= 40.0
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct WindowFile {
+    x: Option<f32>,
+    y: Option<f32>,
+    width: Option<f32>,
+    height: Option<f32>,
+    display: Option<String>,
+}
+
 fn config_dir() -> Option<PathBuf> {
     let preferred =
         preferred_config_dir(pty::home_dir().as_deref(), std::env::var_os("XDG_CONFIG_HOME").as_deref().map(Path::new))?;
@@ -766,5 +953,29 @@ mod tests {
             Some(Path::new("/custom/xdg/ghostterm"))
         );
         assert_eq!(preferred_config_dir(None, None), None);
+    }
+
+    #[test]
+    fn window_frame_round_trip() {
+        let parsed = parse_window_frame(
+            "x = 120\ny = 80\nwidth = 1100\nheight = 720\ndisplay = \"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\"\n",
+        )
+        .unwrap();
+        assert_eq!(parsed.x, 120.0);
+        assert_eq!(parsed.y, 80.0);
+        assert_eq!(parsed.width, 1100.0);
+        assert_eq!(parsed.height, 720.0);
+        assert_eq!(parsed.display.as_deref(), Some("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"));
+        let again = parse_window_frame(&parsed.render()).unwrap();
+        assert_eq!(again, parsed);
+    }
+
+    #[test]
+    fn window_frame_clamps_small_size_and_rejects_invalid() {
+        let small = parse_window_frame("x = 10\ny = 10\nwidth = 200\nheight = 100\n").unwrap();
+        assert_eq!(small.width, WINDOW_MIN_WIDTH);
+        assert_eq!(small.height, WINDOW_MIN_HEIGHT);
+        assert!(parse_window_frame("x = 1\ny = 2\n").is_none());
+        assert!(parse_window_frame("x = nan\ny = 0\nwidth = 800\nheight = 600\n").is_none());
     }
 }
