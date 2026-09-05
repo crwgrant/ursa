@@ -27,6 +27,7 @@ A terminal emulator built in Rust with [GPUI](https://github.com/zed-industries/
 - [Rust](https://rustup.rs/) (stable)
 - [Zig](https://ziglang.org/) for the libghostty-vt build
 - On macOS, [Xcode](https://developer.apple.com/xcode/) (not only Command Line Tools) so GPUI can compile Metal shaders
+- On macOS, [cargo-packager](https://crates.io/crates/cargo-packager) if you want a `.app` / `.dmg` you can put in **Applications** (`cargo install cargo-packager --locked`)
 
 The repo’s `.cargo/config.toml` sets `DEVELOPER_DIR` to `/Applications/Xcode.app/Contents/Developer` when it is not already set.
 
@@ -37,6 +38,20 @@ cargo run
 ```
 
 The window title is **Ghostterm**. On macOS, `$SHELL` is used when present (otherwise `/bin/zsh`). On Windows, a Unix-style `$SHELL` such as `/bin/zsh` is ignored. If [Git for Windows](https://gitforwindows.org/) is installed, sessions start Git Bash (`Git\bin\bash.exe`); otherwise Windows PowerShell, or `%COMSPEC%` if PowerShell is missing. A Windows `$SHELL` pointing at an `.exe` still wins when set.
+
+## Package (macOS)
+
+This builds a release binary, wraps it as **Ghostterm.app**, and writes a `.dmg` you can open and drag into **Applications**:
+
+```bash
+cargo packager --release
+```
+
+That runs `cargo build --release` first (see `before-packaging-command` in `Cargo.toml`). The `.app` and `.dmg` land under `target/release`. You only need to install the packager once:
+
+```bash
+cargo install cargo-packager --locked
+```
 
 ## Shortcuts
 
