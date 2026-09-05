@@ -116,9 +116,9 @@ Ursa reads a TOML file it owns (not libghostty). The file is created the first t
 | --- | --- |
 | All | `~/.config/ursa/config.toml` |
 
-If `XDG_CONFIG_HOME` is set, that directory is used instead of `~/.config`. An existing folder at a previous location (`~/.config/skiff`, `~/.config/ghostterm`, `~/Library/Application Support/Ghostterm` on macOS, `%APPDATA%\Ghostterm` on Windows) is still used until you move it.
+If `XDG_CONFIG_HOME` is set, that directory is used instead of `~/.config`.
 
-Window position, size, which monitor it was on, the sidebar split width, and the session/tab/pane layout are stored separately in `window.toml` in the same folder, so moving or resizing the app does not rewrite `config.toml`. Extra windows opened with ⌘N are offset from that saved frame and start with one session. If that monitor is unplugged, the window is centered on the current screen. Drag the border between the sessions list and the terminal to resize; double-click it or use **Reset to Defaults** in Settings to restore the 220px width. With **Keep sessions**, reopening restores the last sessions, tabs, and split trees, each pane’s **local** working directory, and the text that was on screen. A new shell starts in that directory (running commands are not resumed). Remote OSC 7 paths are not restored as a local `cd` and SSH sessions are not restarted. Screen snapshots live in `state/` next to `window.toml` (`s{session}-t{tab}-p{pane}.snp`). **Close sessions** (the default) and quitting with only an unused tab both start clean on the next launch.
+Window position, size, which monitor it was on, the sidebar split width, and the session/tab/pane layout are stored separately in `window.toml` in the same folder, so moving or resizing the app does not rewrite `config.toml`. On Windows, new sessions can be Git Bash or PowerShell: use the **▾** next to **+** in the sessions list, or the **Shell** setting when the session sidebar is off. Extra windows opened with ⌘N are offset from that saved frame and start with one session. If that monitor is unplugged, the window is centered on the current screen. Drag the border between the sessions list and the terminal to resize; double-click it or use **Reset to Defaults** in Settings to restore the 220px width. With **Keep sessions**, reopening restores the last sessions, tabs, and split trees, each pane’s **local** working directory, and the text that was on screen. A new shell starts in that directory (running commands are not resumed). Remote OSC 7 paths are not restored as a local `cd` and SSH sessions are not restarted. Screen snapshots live in `state/` next to `window.toml` (`s{session}-t{tab}-p{pane}.snp`). **Close sessions** (the default) and quitting with only an unused tab both start clean on the next launch.
 
 ```toml
 [font]
@@ -134,6 +134,7 @@ scrollback_lines = 2000
 cursor = "bar" # or "block"
 on_exit = "close" # or "keep" — close sessions on quit, or keep and restore them
 sessions = true # or false — hide the session sidebar and use horizontal tabs only
+shell = "auto" # Windows: auto, git-bash, or powershell. Used for new sessions (and new tabs when the sidebar is off)
 ```
 
 Leave `family` empty or omit it to prefer **NotoMono Nerd Font** (then **NotoMono Nerd Font Mono**) when that font is installed, otherwise the OS mono font (**Menlo** on macOS, **Cascadia Mono** on Windows). A missing glyph still falls back through that list, so Nerd Font icons can appear even when the primary face is Menlo. JetBrains Mono is not a default; it stretches cell spacing in this renderer.

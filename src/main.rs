@@ -16,11 +16,10 @@ mod theme;
 use std::collections::HashMap;
 
 use gpui::{
-    Action, AnyElement, AnyView, App, Application, Bounds, Context, CursorStyle, DragMoveEvent, KeyBinding, KeyDownEvent,
-    Keystroke, MenuItem, MouseButton, MouseDownEvent, Pixels, SharedString, TitlebarOptions, Window, WindowBounds,
-    WindowOptions, actions, canvas, div, point, prelude::*, px, rgb, size,
+    Action, AnyElement, AnyView, App, Application, Bounds, Context, Corner, CursorStyle, DragMoveEvent, KeyBinding, KeyDownEvent,
+    Keystroke, MenuItem, MouseButton, MouseDownEvent, Pixels, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
+    actions, anchored, canvas, div, point, prelude::*, px, rgb, size,
 };
-use app_menu::AppMenuState;
 use panes::{PaneSpec, SplitAxis};
 use session::{Session, SessionEvent, TabRestore};
 
@@ -84,6 +83,7 @@ struct Tab {
 struct SessionGroup {
     tabs: Vec<Tab>,
     active: usize,
+    shell: config::WindowsShell,
 }
 
 struct Workspace {
@@ -98,6 +98,7 @@ struct Workspace {
     pane_split_locked: bool,
     open_menu: Option<app_menu::OpenMenu>,
     menu_title_x: [Option<gpui::Pixels>; 4],
+    open_shell_menu: Option<gpui::Point<Pixels>>,
 }
 
 #[derive(Clone)]
@@ -346,11 +347,23 @@ impl Tab {
 }
 
 impl SessionGroup {
-    fn spawn(window: &mut Window, cx: &mut Context<Workspace>) -> Self {
-        let session = cx.new(|cx| Session::spawn(0, window, cx, TabRestore::default()));
+    fn spawn(shell: config::WindowsShell, window: &mut Window, cx: &mut Context<Workspace>) -> Self {
+        let session = cx.new(|cx| {
+            Session::spawn(
+                0,
+                window,
+                cx,
+                TabRestore {
+                    cwd: None,
+                    snapshot: None,
+                    shell,
+                },
+            )
+        });
         Self {
             tabs: vec![Tab::from_leaf(session)],
             active: 0,
+            shell,
         }
     }
 
@@ -360,6 +373,7 @@ impl SessionGroup {
         restores: Vec<config::TabLayout>,
         snapshot_session: usize,
         load_snapshots: bool,
+        shell: config::WindowsShell,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Self {
@@ -367,12 +381,13 @@ impl SessionGroup {
         let tabs = (0..count)
             .map(|index| {
                 let layout = restores.get(index).cloned().unwrap_or_default();
-                Tab::from_layout(index, layout, snapshot_session, load_snapshots, window, cx)
+                Tab::from_layout(index, layout, snapshot_session, load_snapshots, shell, window, cx)
             })
             .collect();
         Self {
             tabs,
             active: active.min(count - 1),
+            shell,
         }
     }
 
@@ -398,6 +413,7 @@ impl Tab {
         layout: config::TabLayout,
         snapshot_session: usize,
         load_snapshots: bool,
+        shell: config::WindowsShell,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Self {
@@ -408,6 +424,7 @@ impl Tab {
             index,
             snapshot_session,
             load_snapshots,
+            shell,
             &mut pane,
             &mut restores,
             window,
@@ -423,6 +440,7 @@ fn spawn_pane_spec(
     tab_index: usize,
     snapshot_session: usize,
     load_snapshots: bool,
+    shell: config::WindowsShell,
     pane: &mut usize,
     restores: &mut impl Iterator<Item = Option<std::path::PathBuf>>,
     window: &mut Window,
@@ -437,6 +455,7 @@ fn spawn_pane_spec(
                 snapshot: load_snapshots
                     .then(|| config::read_pane_snapshot(snapshot_session, tab_index, pane_index))
                     .flatten(),
+                shell,
             };
             PaneNode::leaf(cx.new(|cx| Session::spawn(tab_index, window, cx, restore)))
         }
@@ -454,6 +473,7 @@ fn spawn_pane_spec(
                 tab_index,
                 snapshot_session,
                 load_snapshots,
+                shell,
                 pane,
                 restores,
                 window,
@@ -464,6 +484,7 @@ fn spawn_pane_spec(
                 tab_index,
                 snapshot_session,
                 load_snapshots,
+                shell,
                 pane,
                 restores,
                 window,
@@ -496,7 +517,16 @@ impl Workspace {
             .enumerate()
             .map(|(session_index, spec)| {
                 let snapshot_session = snapshot_session.unwrap_or(session_index);
-                SessionGroup::spawn_tabs(spec.tabs, spec.active, spec.tab_specs.clone(), snapshot_session, restore, window, cx)
+                SessionGroup::spawn_tabs(
+                    spec.tabs,
+                    spec.active,
+                    spec.tab_specs.clone(),
+                    snapshot_session,
+                    restore,
+                    restored_session_shell(spec.shell, cx),
+                    window,
+                    cx,
+                )
             })
             .collect::<Vec<_>>();
         let mut workspace = Self {
@@ -511,6 +541,7 @@ impl Workspace {
             pane_split_locked: false,
             open_menu: None,
             menu_title_x: [None; 4],
+            open_shell_menu: None,
         };
         workspace.assign_all_split_ids();
         for index in 0..workspace.sessions.len() {
@@ -520,6 +551,7 @@ impl Workspace {
         cx.observe_global::<config::AppSettings>(|this, cx| {
             this.apply_config(cx);
             this.sync_session_sidebar(cx);
+            this.sync_session_shells(cx);
             apply_app_menus(cx);
             if config::persist_sessions(cx) {
                 this.persist_layout(cx);
@@ -590,11 +622,17 @@ impl Workspace {
     }
 
     fn add_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.add_session_with_shell(config::windows_shell(cx), window, cx);
+    }
+
+    fn add_session_with_shell(&mut self, shell: config::WindowsShell, window: &mut Window, cx: &mut Context<Self>) {
         if !config::sessions_enabled(cx) {
             return;
         }
+        self.open_shell_menu = None;
+        warn_if_shell_missing(shell, cx);
         let index = self.sessions.len();
-        let group = SessionGroup::spawn(window, cx);
+        let group = SessionGroup::spawn(shell, window, cx);
         self.sessions.push(group);
         self.active_session = index;
         self.subscribe_group(index, window, cx);
@@ -608,7 +646,23 @@ impl Workspace {
             return;
         };
         let index = group.tabs.len();
-        let session = cx.new(|cx| Session::spawn(index, window, cx, TabRestore::default()));
+        let shell = if config::sessions_enabled(cx) {
+            group.shell
+        } else {
+            config::windows_shell(cx)
+        };
+        let session = cx.new(|cx| {
+            Session::spawn(
+                index,
+                window,
+                cx,
+                TabRestore {
+                    cwd: None,
+                    snapshot: None,
+                    shell,
+                },
+            )
+        });
         group.tabs.push(Tab::from_leaf(session.clone()));
         group.active = index;
         self.subscribe_terminal(&session, window, cx);
@@ -803,7 +857,23 @@ impl Workspace {
         }
         let cwd = tab.focused_session().and_then(|session| session.read(cx).spawn_cwd());
         let tab_index = self.sessions.get(self.active_session).map(|group| group.active).unwrap_or(0);
-        let session = cx.new(|cx| Session::spawn(tab_index, window, cx, TabRestore { cwd, snapshot: None }));
+        let shell = self
+            .sessions
+            .get(self.active_session)
+            .map(|group| group.shell)
+            .unwrap_or_else(|| config::windows_shell(cx));
+        let session = cx.new(|cx| {
+            Session::spawn(
+                tab_index,
+                window,
+                cx,
+                TabRestore {
+                    cwd,
+                    snapshot: None,
+                    shell,
+                },
+            )
+        });
         let id = self.next_split_id;
         self.next_split_id += 1;
         let Some(tab) = self.active_tab_mut() else {
@@ -911,6 +981,16 @@ impl Workspace {
         self.active_session = 0;
     }
 
+    fn sync_session_shells(&mut self, cx: &mut Context<Self>) {
+        if config::sessions_enabled(cx) {
+            return;
+        }
+        let shell = config::windows_shell(cx);
+        if let Some(group) = self.sessions.first_mut() {
+            group.shell = shell;
+        }
+    }
+
     fn set_sidebar_width(&mut self, width: f32, window: &Window, persist: bool, cx: &mut Context<Self>) {
         let width = config::clamp_sidebar_width(width, f32::from(window.viewport_size().width));
         if (self.sidebar_width - width).abs() < 0.5 {
@@ -1013,6 +1093,7 @@ impl Workspace {
                         cwds: tab.root.leaves().iter().map(|session| session.read(cx).spawn_cwd()).collect(),
                     })
                     .collect(),
+                shell: group.shell,
             })
             .collect();
         let layout = config::WorkspaceLayout::from_sessions(sessions, self.active_session);
@@ -1114,7 +1195,7 @@ impl Render for Workspace {
             })
             .on_action(cx.listener(|this, _: &ClearScreen, _window, cx| this.clear_active(cx)))
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                if event.keystroke.key == "escape" && this.dismiss_app_menu(cx) {
+                if event.keystroke.key == "escape" && this.dismiss_menus(cx) {
                     cx.stop_propagation();
                     return;
                 }
@@ -1129,11 +1210,7 @@ impl Render for Workspace {
             .on_action(|_: &OpenSettings, _window, cx| crate::settings::open(cx))
             .on_action(|_: &OpenAbout, _window, cx| crate::about::open(cx))
             .when(cfg!(not(target_os = "macos")), |workspace| {
-                workspace.child(app_menu::render_bar(
-                    open_menu.map(|menu| menu.id),
-                    sessions_enabled,
-                    cx,
-                ))
+                workspace.child(app_menu::render_bar(open_menu.map(|menu| menu.id), sessions_enabled, cx))
             })
             .child(
                 div()
@@ -1149,6 +1226,7 @@ impl Render for Workspace {
             .when(cfg!(not(target_os = "macos")), |workspace| {
                 workspace.children(app_menu::render_popovers(open_menu, sessions_enabled, cx))
             })
+            .children(self.render_shell_menu(cx))
             .child(notify::overlay(cx))
     }
 }
@@ -1161,6 +1239,7 @@ impl app_menu::AppMenuState for Workspace {
     }
 
     fn toggle_app_menu(&mut self, id: app_menu::MenuId, fallback_x: gpui::Pixels, cx: &mut Context<Self>) {
+        self.open_shell_menu = None;
         if self.open_menu.as_ref().map(|menu| menu.id) == Some(id) {
             self.open_menu = None;
         } else {
@@ -1183,11 +1262,7 @@ impl app_menu::AppMenuState for Workspace {
     }
 
     fn dismiss_app_menu(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.open_menu.take().is_none() {
-            return false;
-        }
-        cx.notify();
-        true
+        self.dismiss_menus(cx)
     }
 
     fn run_app_menu_action(&mut self, action: Box<dyn Action>, window: &mut Window, cx: &mut Context<Self>) {
@@ -1198,6 +1273,85 @@ impl app_menu::AppMenuState for Workspace {
 }
 
 impl Workspace {
+    fn dismiss_menus(&mut self, cx: &mut Context<Self>) -> bool {
+        let app = self.open_menu.take().is_some();
+        let shell = self.open_shell_menu.take().is_some();
+        if !app && !shell {
+            return false;
+        }
+        cx.notify();
+        true
+    }
+
+    fn toggle_shell_menu(&mut self, position: gpui::Point<Pixels>, cx: &mut Context<Self>) {
+        self.open_menu = None;
+        if self.open_shell_menu.take().is_some() {
+            cx.notify();
+            return;
+        }
+        self.open_shell_menu = Some(position);
+        cx.notify();
+    }
+
+    fn render_shell_menu(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let position = self.open_shell_menu?;
+        let colors = theme::colors(cx);
+        let items: Vec<_> = config::WindowsShell::choices()
+            .into_iter()
+            .enumerate()
+            .map(|(index, shell)| {
+                div()
+                    .id(("new-session-shell", index))
+                    .w_full()
+                    .px_3()
+                    .py_1()
+                    .text_sm()
+                    .text_color(rgb(colors.text))
+                    .cursor_pointer()
+                    .hover(move |style| style.bg(rgb(colors.tab_hover)))
+                    .child(shell.label().to_string())
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _event, window, cx| {
+                            cx.stop_propagation();
+                            this.add_session_with_shell(shell, window, cx);
+                        }),
+                    )
+            })
+            .collect();
+        Some(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .occlude()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _event, _window, cx| {
+                        this.dismiss_menus(cx);
+                        cx.stop_propagation();
+                    }),
+                )
+                .child(
+                    anchored().position(position).anchor(Corner::TopLeft).child(
+                        div()
+                            .id("new-session-shell-menu")
+                            .occlude()
+                            .min_w(px(140.0))
+                            .py_1()
+                            .rounded_md()
+                            .bg(rgb(colors.tooltip))
+                            .border_1()
+                            .border_color(rgb(colors.sidebar_border))
+                            .shadow_md()
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .children(items),
+                    ),
+                ),
+        )
+    }
+
     fn render_sidebar(&self, tabs: &[(usize, SharedString, bool)], cx: &mut Context<Self>) -> impl IntoElement {
         let colors = theme::colors(cx);
         div()
@@ -1549,24 +1703,71 @@ fn settings_button(cx: &App) -> impl IntoElement {
         )
 }
 
+fn restored_session_shell(persisted: config::WindowsShell, cx: &App) -> config::WindowsShell {
+    if config::sessions_enabled(cx) || persisted != config::WindowsShell::Auto {
+        persisted
+    } else {
+        config::windows_shell(cx)
+    }
+}
+
+fn warn_if_shell_missing(shell: config::WindowsShell, cx: &mut App) {
+    if shell == config::WindowsShell::GitBash && !pty::git_bash_available() {
+        notify::show(cx, "Git Bash wasn't found; using PowerShell.");
+    }
+}
+
 fn new_tab_button(cx: &mut Context<Workspace>) -> impl IntoElement {
     let colors = theme::colors(cx);
-    div()
+    let show_shell_picker = cfg!(windows) && config::WindowsShell::choices().len() > 1;
+    let plus = div()
         .id("new-tab")
         .h(px(22.0))
         .w(px(22.0))
-        .rounded_md()
         .flex()
         .items_center()
         .justify_center()
-        .bg(rgb(colors.button))
         .text_color(rgb(colors.text))
         .text_sm()
         .cursor_pointer()
         .hover(move |style| style.bg(rgb(colors.tab_hover)))
         .tooltip(action_tooltip("New Session", app_menu::new_session_shortcut()))
         .child("+")
-        .on_mouse_down(MouseButton::Left, cx.listener(|this, _event, window, cx| this.add_session(window, cx)))
+        .on_mouse_down(MouseButton::Left, cx.listener(|this, _event, window, cx| this.add_session(window, cx)));
+    if !show_shell_picker {
+        return plus.rounded_md().bg(rgb(colors.button)).into_any_element();
+    }
+    div()
+        .flex()
+        .items_center()
+        .h(px(22.0))
+        .rounded_md()
+        .bg(rgb(colors.button))
+        .child(plus)
+        .child(div().w(px(1.0)).h(px(12.0)).bg(rgb(colors.sidebar_border)))
+        .child(
+            div()
+                .id("new-session-shell")
+                .h_full()
+                .w(px(16.0))
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(rgb(colors.text_dim))
+                .text_xs()
+                .cursor_pointer()
+                .hover(move |style| style.bg(rgb(colors.tab_hover)).text_color(rgb(colors.text)))
+                .tooltip(action_tooltip("New Session…", "Git Bash or PowerShell"))
+                .child("▾")
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, event: &MouseDownEvent, _window, cx| {
+                        cx.stop_propagation();
+                        this.toggle_shell_menu(event.position, cx);
+                    }),
+                ),
+        )
+        .into_any_element()
 }
 
 fn pane_settings_button(cx: &mut Context<Workspace>) -> impl IntoElement {

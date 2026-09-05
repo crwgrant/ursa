@@ -67,6 +67,7 @@ pub struct WindowFrame {
     pub tab_cwds: Vec<String>,
     pub tab_panes: Vec<String>,
     pub tab_focus: Vec<usize>,
+    pub session_shells: Vec<WindowsShell>,
 }
 
 impl WindowFrame {
@@ -126,6 +127,10 @@ impl WindowFrame {
                 .map(|frame| frame.tab_focus.clone())
                 .or_else(|| pending_workspace_layout().map(|layout| layout.tab_focus()))
                 .unwrap_or_default(),
+            session_shells: last
+                .map(|frame| frame.session_shells.clone())
+                .or_else(|| pending_workspace_layout().map(|layout| layout.session_shells()))
+                .unwrap_or_default(),
         }
         .sanitized()
     }
@@ -171,18 +176,20 @@ impl WindowFrame {
             tab_cwds: self.tab_cwds,
             tab_panes: self.tab_panes,
             tab_focus: self.tab_focus,
+            session_shells: self.session_shells,
         })
         .map(|frame| frame.with_sanitized_layout())
     }
 
     fn with_sanitized_layout(mut self) -> Self {
-        let layout = WorkspaceLayout::from_parts(
+        let layout = workspace_layout_from_frame(
             self.session_tabs,
             self.active_session,
             self.active_tabs,
             parse_tab_cwds(self.tab_cwds),
             parse_tab_panes(self.tab_panes),
             self.tab_focus,
+            self.session_shells,
         );
         self.session_tabs = layout.session_tabs();
         self.active_session = layout.active_session;
@@ -190,6 +197,7 @@ impl WindowFrame {
         self.tab_cwds = layout.tab_cwd_strings();
         self.tab_panes = layout.tab_pane_strings();
         self.tab_focus = layout.tab_focus();
+        self.session_shells = layout.session_shells();
         self
     }
 
@@ -208,6 +216,7 @@ impl WindowFrame {
 # `session_tabs` is the tab count per sidebar session; `active_tabs` is the selected tab in each.
 # `tab_cwds` is the last local working directory of each pane leaf, session-major then tab then pane order.
 # `tab_panes` encodes each tab’s split tree (`leaf` or `h:0.5:leaf:leaf` / `v:…`). `tab_focus` is the focused leaf.
+# `session_shells` is the Windows shell for each sidebar session (`git-bash` or `powershell`).
 x = {x}
 y = {y}
 width = {width}
@@ -244,6 +253,14 @@ state = {state}
         if self.tab_focus.iter().any(|&focus| focus != 0) {
             out.push_str(&format!("tab_focus = {}\n", toml_usize_array(&self.tab_focus)));
         }
+        if self.session_shells.iter().any(|shell| *shell != WindowsShell::Auto) {
+            let shells = self
+                .session_shells
+                .iter()
+                .map(|shell| shell.as_str().to_string())
+                .collect::<Vec<_>>();
+            out.push_str(&format!("session_shells = {}\n", toml_string_array(&shells)));
+        }
         out
     }
 }
@@ -259,6 +276,18 @@ pub struct SessionLayout {
     pub tabs: usize,
     pub active: usize,
     pub tab_specs: Vec<TabLayout>,
+    pub shell: WindowsShell,
+}
+
+impl Default for SessionLayout {
+    fn default() -> Self {
+        Self {
+            tabs: 1,
+            active: 0,
+            tab_specs: vec![TabLayout::default()],
+            shell: WindowsShell::Auto,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -281,11 +310,7 @@ impl Default for TabLayout {
 impl Default for WorkspaceLayout {
     fn default() -> Self {
         Self {
-            sessions: vec![SessionLayout {
-                tabs: 1,
-                active: 0,
-                tab_specs: vec![TabLayout::default()],
-            }],
+            sessions: vec![SessionLayout::default()],
             active_session: 0,
         }
     }
@@ -293,7 +318,8 @@ impl Default for WorkspaceLayout {
 
 impl WorkspaceLayout {
     pub fn from_sessions(sessions: Vec<SessionLayout>, active_session: usize) -> Self {
-        Self::from_parts(
+        let shells = sessions.iter().map(|session| session.shell).collect();
+        let mut layout = Self::from_parts(
             sessions.iter().map(|session| session.tabs).collect(),
             active_session,
             sessions.iter().map(|session| session.active).collect(),
@@ -309,7 +335,9 @@ impl WorkspaceLayout {
                 .iter()
                 .flat_map(|session| session.tab_specs.iter().map(|tab| tab.focused))
                 .collect(),
-        )
+        );
+        layout.apply_shells(shells);
+        layout
     }
 
     fn from_parts(
@@ -338,7 +366,12 @@ impl WorkspaceLayout {
                     TabLayout { spec, focused, cwds }
                 })
                 .collect();
-            sessions.push(SessionLayout { tabs, active, tab_specs });
+            sessions.push(SessionLayout {
+                tabs,
+                active,
+                tab_specs,
+                shell: WindowsShell::Auto,
+            });
         }
         if sessions.is_empty() {
             return Self::default();
@@ -401,17 +434,23 @@ impl WorkspaceLayout {
             .collect()
     }
 
+    fn session_shells(&self) -> Vec<WindowsShell> {
+        self.sessions.iter().map(|session| session.shell).collect()
+    }
+
+    fn apply_shells(&mut self, shells: Vec<WindowsShell>) {
+        for (session, shell) in self.sessions.iter_mut().zip(shells) {
+            session.shell = shell;
+        }
+    }
+
     pub fn into_single_session(self) -> Self {
         let session = self
             .sessions
             .get(self.active_session)
             .cloned()
             .or_else(|| self.sessions.first().cloned())
-            .unwrap_or_else(|| SessionLayout {
-                tabs: 1,
-                active: 0,
-                tab_specs: vec![TabLayout::default()],
-            });
+            .unwrap_or_else(SessionLayout::default);
         Self {
             sessions: vec![session],
             active_session: 0,
@@ -530,6 +569,58 @@ impl SessionSidebar {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WindowsShell {
+    #[default]
+    Auto,
+    GitBash,
+    PowerShell,
+}
+
+impl WindowsShell {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::GitBash => "git-bash",
+            Self::PowerShell => "powershell",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto",
+            Self::GitBash => "Git Bash",
+            Self::PowerShell => "PowerShell",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "auto" | "default" | "" => Some(Self::Auto),
+            "git-bash" | "gitbash" | "bash" | "git" => Some(Self::GitBash),
+            "powershell" | "pwsh" | "ps" => Some(Self::PowerShell),
+            _ => None,
+        }
+    }
+
+    pub fn resolved(self) -> Self {
+        match self {
+            Self::PowerShell => Self::PowerShell,
+            Self::GitBash | Self::Auto if crate::pty::git_bash_available() => Self::GitBash,
+            _ => Self::PowerShell,
+        }
+    }
+
+    pub fn choices() -> Vec<Self> {
+        let mut choices = Vec::new();
+        if crate::pty::git_bash_available() {
+            choices.push(Self::GitBash);
+        }
+        choices.push(Self::PowerShell);
+        choices
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
     pub font_family: Option<String>,
@@ -538,6 +629,7 @@ pub struct Config {
     pub cursor_shape: CursorShape,
     pub on_exit: OnExit,
     pub session_sidebar: SessionSidebar,
+    pub windows_shell: WindowsShell,
     pub theme: String,
     pub themes_file: String,
 }
@@ -551,6 +643,7 @@ impl Default for Config {
             cursor_shape: CursorShape::Bar,
             on_exit: OnExit::Close,
             session_sidebar: SessionSidebar::On,
+            windows_shell: WindowsShell::Auto,
             theme: theme::DEFAULT_THEME.to_string(),
             themes_file: theme::DEFAULT_THEMES_FILE.to_string(),
         }
@@ -620,6 +713,8 @@ cursor = {cursor}
 on_exit = {on_exit}
 # Show the session sidebar (on) or use horizontal tabs only (off).
 sessions = {sessions}
+# Windows shell for new sessions: auto, git-bash, or powershell. Ignored on macOS.
+shell = {shell}
 ",
             theme = toml_string(&self.theme),
             themes = toml_string(&self.themes_file),
@@ -627,6 +722,7 @@ sessions = {sessions}
             cursor = toml_string(self.cursor_shape.as_str()),
             on_exit = toml_string(self.on_exit.as_str()),
             sessions = self.session_sidebar.as_bool(),
+            shell = toml_string(self.windows_shell.as_str()),
         )
     }
 
@@ -662,6 +758,7 @@ struct TerminalSection {
     cursor: Option<String>,
     on_exit: Option<String>,
     sessions: Option<toml::Value>,
+    shell: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -756,6 +853,10 @@ pub fn sessions_enabled(cx: &App) -> bool {
     current(cx).session_sidebar.as_bool()
 }
 
+pub fn windows_shell(cx: &App) -> WindowsShell {
+    current(cx).windows_shell
+}
+
 pub fn path(cx: &App) -> PathBuf {
     cx.try_global::<AppSettings>()
         .map(|settings| settings.path.clone())
@@ -838,6 +939,12 @@ pub fn parse(text: &str) -> Result<Config, String> {
             .sessions
             .as_ref()
             .and_then(SessionSidebar::from_toml)
+            .unwrap_or_default(),
+        windows_shell: file
+            .terminal
+            .shell
+            .as_deref()
+            .and_then(WindowsShell::parse)
             .unwrap_or_default(),
         theme: file
             .appearance
@@ -1024,13 +1131,14 @@ pub fn restored_workspace_layout(cx: &App) -> WorkspaceLayout {
     pending_workspace_layout()
         .or_else(|| {
             load_window_frame().map(|frame| {
-                WorkspaceLayout::from_parts(
+                workspace_layout_from_frame(
                     frame.session_tabs,
                     frame.active_session,
                     frame.active_tabs,
                     parse_tab_cwds(frame.tab_cwds),
                     parse_tab_panes(frame.tab_panes),
                     frame.tab_focus,
+                    frame.session_shells,
                 )
             })
         })
@@ -1038,13 +1146,14 @@ pub fn restored_workspace_layout(cx: &App) -> WorkspaceLayout {
 }
 
 pub fn save_workspace_layout(layout: WorkspaceLayout) {
-    let layout = WorkspaceLayout::from_parts(
+    let layout = workspace_layout_from_frame(
         layout.session_tabs(),
         layout.active_session,
         layout.active_tabs(),
         layout.tab_cwd_paths(),
         layout.tab_pane_specs(),
         layout.tab_focus(),
+        layout.session_shells(),
     );
     if let Ok(mut last) = LAST_WORKSPACE_LAYOUT.lock() {
         if last.as_ref() == Some(&layout) {
@@ -1070,12 +1179,14 @@ fn write_workspace_layout_to_frame(layout: &WorkspaceLayout) {
     let tab_cwds = layout.tab_cwd_strings();
     let tab_panes = layout.tab_pane_strings();
     let tab_focus = layout.tab_focus();
+    let session_shells = layout.session_shells();
     if frame.session_tabs == session_tabs
         && frame.active_session == layout.active_session
         && frame.active_tabs == active_tabs
         && frame.tab_cwds == tab_cwds
         && frame.tab_panes == tab_panes
         && frame.tab_focus == tab_focus
+        && frame.session_shells == session_shells
     {
         return;
     }
@@ -1085,6 +1196,7 @@ fn write_workspace_layout_to_frame(layout: &WorkspaceLayout) {
     frame.tab_cwds = tab_cwds;
     frame.tab_panes = tab_panes;
     frame.tab_focus = tab_focus;
+    frame.session_shells = session_shells;
     if let Ok(mut last) = LAST_WINDOW_FRAME.lock() {
         *last = Some(frame.clone());
     }
@@ -1190,6 +1302,7 @@ fn parse_window_frame(text: &str) -> Option<WindowFrame> {
         tab_cwds: file.tab_cwds.unwrap_or_default(),
         tab_panes: file.tab_panes.unwrap_or_default(),
         tab_focus: file.tab_focus.unwrap_or_default(),
+        session_shells: parse_session_shells(file.session_shells.unwrap_or_default()),
     }
     .sanitized()
 }
@@ -1258,6 +1371,28 @@ struct WindowFile {
     tab_cwds: Option<Vec<String>>,
     tab_panes: Option<Vec<String>>,
     tab_focus: Option<Vec<usize>>,
+    session_shells: Option<Vec<String>>,
+}
+
+fn workspace_layout_from_frame(
+    session_tabs: Vec<usize>,
+    active_session: usize,
+    active_tabs: Vec<usize>,
+    tab_cwds: Vec<Option<PathBuf>>,
+    tab_panes: Vec<PaneSpec>,
+    tab_focus: Vec<usize>,
+    session_shells: Vec<WindowsShell>,
+) -> WorkspaceLayout {
+    let mut layout = WorkspaceLayout::from_parts(session_tabs, active_session, active_tabs, tab_cwds, tab_panes, tab_focus);
+    layout.apply_shells(session_shells);
+    layout
+}
+
+fn parse_session_shells(values: impl IntoIterator<Item = impl AsRef<str>>) -> Vec<WindowsShell> {
+    values
+        .into_iter()
+        .map(|value| WindowsShell::parse(value.as_ref()).unwrap_or_default())
+        .collect()
 }
 
 fn parse_tab_panes(values: impl IntoIterator<Item = impl AsRef<str>>) -> Vec<PaneSpec> {
@@ -1684,6 +1819,7 @@ mod tests {
             cursor_shape: CursorShape::Bar,
             on_exit: OnExit::Keep,
             session_sidebar: SessionSidebar::Off,
+            windows_shell: WindowsShell::PowerShell,
             theme: "catppuccin-mocha".into(),
             themes_file: "palettes.toml".into(),
         };
@@ -1694,6 +1830,7 @@ mod tests {
         assert_eq!(again.cursor_shape, CursorShape::Bar);
         assert_eq!(again.on_exit, OnExit::Keep);
         assert_eq!(again.session_sidebar, SessionSidebar::Off);
+        assert_eq!(again.windows_shell, WindowsShell::PowerShell);
         assert_eq!(again.theme, "catppuccin-mocha");
         assert_eq!(again.themes_file, "palettes.toml");
     }
@@ -1764,6 +1901,19 @@ mod tests {
         assert_eq!(parse("[terminal]\nsessions = \"off\"\n").unwrap().session_sidebar, SessionSidebar::Off);
         assert_eq!(parse("[terminal]\nsessions = \"hide\"\n").unwrap().session_sidebar, SessionSidebar::Off);
         assert_eq!(parse("[terminal]\n").unwrap().session_sidebar, SessionSidebar::On);
+    }
+
+    #[test]
+    fn parse_windows_shell_aliases() {
+        assert_eq!(parse("[terminal]\nshell = \"git-bash\"\n").unwrap().windows_shell, WindowsShell::GitBash);
+        assert_eq!(parse("[terminal]\nshell = \"bash\"\n").unwrap().windows_shell, WindowsShell::GitBash);
+        assert_eq!(
+            parse("[terminal]\nshell = \"powershell\"\n").unwrap().windows_shell,
+            WindowsShell::PowerShell
+        );
+        assert_eq!(parse("[terminal]\nshell = \"pwsh\"\n").unwrap().windows_shell, WindowsShell::PowerShell);
+        assert_eq!(parse("[terminal]\nshell = \"auto\"\n").unwrap().windows_shell, WindowsShell::Auto);
+        assert_eq!(parse("[terminal]\n").unwrap().windows_shell, WindowsShell::Auto);
     }
 
     #[test]
@@ -1853,6 +2003,28 @@ mod tests {
         assert_eq!(layout.sessions[0].tab_specs[0].cwds, vec![Some(PathBuf::from("/tmp/a"))]);
         assert_eq!(layout.sessions[0].tab_specs[1].cwds, vec![Some(PathBuf::from("/tmp/b"))]);
         assert_eq!(layout.sessions[1].tab_specs[0].cwds, vec![None]);
+    }
+
+    #[test]
+    fn window_frame_round_trips_session_shells() {
+        let parsed = parse_window_frame(
+            "x = 10\ny = 20\nwidth = 800\nheight = 500\nsession_tabs = [1, 1]\nactive_session = 0\nactive_tabs = [0, 0]\nsession_shells = [\"powershell\", \"git-bash\"]\n",
+        )
+        .unwrap();
+        assert_eq!(parsed.session_shells, vec![WindowsShell::PowerShell, WindowsShell::GitBash]);
+        let again = parse_window_frame(&parsed.render()).unwrap();
+        assert_eq!(again.session_shells, parsed.session_shells);
+        let layout = workspace_layout_from_frame(
+            vec![1, 1],
+            0,
+            vec![0, 0],
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            vec![WindowsShell::PowerShell, WindowsShell::GitBash],
+        );
+        assert_eq!(layout.sessions[0].shell, WindowsShell::PowerShell);
+        assert_eq!(layout.sessions[1].shell, WindowsShell::GitBash);
     }
 
     #[test]

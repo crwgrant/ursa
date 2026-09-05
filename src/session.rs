@@ -88,6 +88,7 @@ pub enum SessionEvent {
 pub struct TabRestore {
     pub cwd: Option<PathBuf>,
     pub snapshot: Option<Vec<u8>>,
+    pub shell: crate::config::WindowsShell,
 }
 
 impl TabRestore {
@@ -141,8 +142,16 @@ impl Session {
         let rows = 24;
         let used = restore.marks_used();
         let spawn = crate::cwd::usable_cwd(restore.cwd.as_deref());
-        let pty = pty::spawn_shell(cols, rows, f32::from(cell.x) as u32, f32::from(cell.y) as u32, pty_tx, spawn.as_deref())
-            .expect("failed to spawn shell");
+        let pty = pty::spawn_shell(
+            cols,
+            rows,
+            f32::from(cell.x) as u32,
+            f32::from(cell.y) as u32,
+            pty_tx,
+            spawn.as_deref(),
+            restore.shell,
+        )
+        .expect("failed to spawn shell");
         let pid = pty.pid;
 
         let command_tx_pty = command_tx.clone();
