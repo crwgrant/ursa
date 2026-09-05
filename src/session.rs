@@ -7,8 +7,8 @@ use std::{
 
 use gpui::{
     App, Bounds, ClipboardItem, Context, Corner, CursorStyle, EventEmitter, FocusHandle, InteractiveElement, IntoElement,
-    KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
-    Render, ScrollWheelEvent, Styled, Window, anchored, canvas, div, prelude::FluentBuilder, px, rgb,
+    KeyDownEvent, Keystroke, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
+    Pixels, Render, ScrollWheelEvent, Styled, Timer, Window, anchored, canvas, div, prelude::FluentBuilder, px, rgb,
 };
 use libghostty_vt::{
     Terminal,
@@ -30,6 +30,8 @@ use crate::{
     pty::{self, PtyIo},
     theme,
 };
+
+const CURSOR_BLINK: Duration = Duration::from_millis(530);
 
 #[derive(Clone, Copy, Debug)]
 struct SelectPointer {
@@ -118,6 +120,8 @@ pub struct Session {
     hover_cell: Option<(u32, u16)>,
     hovered_link: Option<LinkHit>,
     link_menu: Option<LinkMenu>,
+    cursor_on: bool,
+    blink_gen: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -167,8 +171,12 @@ impl Session {
             restore.snapshot,
         );
 
-        let focus = cx.focus_handle();
+        let focus = cx.focus_handle().tab_stop(false);
         focus.focus(window);
+        cx.on_focus_in(&focus, window, |this, _, cx| this.restart_cursor_blink(cx))
+            .detach();
+        cx.on_blur(&focus, window, |this, _, cx| this.stop_cursor_blink(cx)).detach();
+        cx.defer_in(window, |this, _, cx| this.restart_cursor_blink(cx));
 
         cx.spawn(async move |this, cx| {
             while let Ok(event) = event_rx.recv_async().await {
@@ -177,6 +185,7 @@ impl Session {
                         match event {
                             Event::Frame(frame) => {
                                 this.frame = frame;
+                                this.cursor_on = true;
                                 this.recompute_hovered_link();
                             }
                             Event::Title(title) if !title.is_empty() => {
@@ -214,7 +223,7 @@ impl Session {
             focus,
             commands: command_tx,
             frame: empty_frame(theme::colors(cx)),
-            last_grid: (cols, rows),
+            last_grid: (0, 0),
             cell_size: cell,
             content_bounds: None,
             selecting: false,
@@ -222,11 +231,45 @@ impl Session {
             hover_cell: None,
             hovered_link: None,
             link_menu: None,
+            cursor_on: true,
+            blink_gen: 0,
         }
     }
 
     pub fn focus(&self, window: &mut Window) {
         self.focus.focus(window);
+    }
+
+    fn restart_cursor_blink(&mut self, cx: &mut Context<Self>) {
+        self.blink_gen = self.blink_gen.wrapping_add(1);
+        self.cursor_on = true;
+        let gen = self.blink_gen;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            loop {
+                Timer::after(CURSOR_BLINK).await;
+                let keep = this
+                    .update(cx, |this, cx| {
+                        if this.blink_gen != gen || this.exited {
+                            return false;
+                        }
+                        this.cursor_on = !this.cursor_on;
+                        cx.notify();
+                        true
+                    })
+                    .unwrap_or(false);
+                if !keep {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn stop_cursor_blink(&mut self, cx: &mut Context<Self>) {
+        self.blink_gen = self.blink_gen.wrapping_add(1);
+        self.cursor_on = true;
+        cx.notify();
     }
 
     pub fn has_selection(&self) -> bool {
@@ -325,19 +368,26 @@ impl Session {
             cx.stop_propagation();
             return;
         }
-        if reserved_shortcut(&event.keystroke.modifiers, &event.keystroke.key, cx) {
-            return;
+        if self.send_keystroke(&event.keystroke, cx) {
+            cx.stop_propagation();
+        }
+    }
+
+    pub fn send_keystroke(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) -> bool {
+        if reserved_shortcut(&keystroke.modifiers, &keystroke.key, cx) {
+            return false;
         }
         if self.exited {
-            cx.stop_propagation();
-            return;
+            return true;
         }
-        if let Some(encoded) = input::encode_keystroke(&event.keystroke) {
-            self.used = true;
-            let _ = self.commands.send(Command::ClearSelection);
-            let _ = self.commands.send(Command::Key(encoded));
-            cx.stop_propagation();
-        }
+        let Some(encoded) = input::encode_keystroke(keystroke) else {
+            return false;
+        };
+        self.used = true;
+        self.restart_cursor_blink(cx);
+        let _ = self.commands.send(Command::ClearSelection);
+        let _ = self.commands.send(Command::Key(encoded));
+        true
     }
 
     fn handle_mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -538,10 +588,13 @@ impl Render for Session {
         let link_menu = self.link_menu.clone();
         let entity = cx.entity();
         let colors = theme::colors(cx);
+        let focus = self.focus.clone();
+        let cursor_on = self.cursor_on;
 
         div()
-            .id("terminal")
+            .id(("terminal", cx.entity_id().as_u64() as usize))
             .track_focus(&self.focus)
+            .tab_stop(false)
             .relative()
             .size_full()
             .bg(rgb(colors.term_bg))
@@ -588,6 +641,7 @@ impl Render for Session {
                             &frame::terminal_font(cx),
                             px(crate::config::font_size(cx)),
                             hovered.as_ref(),
+                            focus.is_focused(window) && cursor_on,
                             window,
                             cx,
                         );
@@ -679,13 +733,13 @@ pub fn clipboard_has_text(cx: &App) -> bool {
 
 fn reserved_shortcut(modifiers: &gpui::Modifiers, key: &str, cx: &App) -> bool {
     let digit = matches!(key, "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9");
-    if modifiers.platform && (matches!(key, "q" | "t" | "w" | "n" | "c" | "v" | "k" | ",") || digit) {
+    if modifiers.platform && (matches!(key, "q" | "t" | "w" | "n" | "c" | "v" | "k" | "d" | "[" | "]" | ",") || digit) {
         return true;
     }
-    if modifiers.control && modifiers.shift && (matches!(key, "t" | "w" | "c" | "v") || digit) {
+    if modifiers.control && modifiers.shift && (matches!(key, "t" | "w" | "c" | "v" | "d" | "[" | "]") || digit) {
         return true;
     }
-    if modifiers.control && modifiers.alt && matches!(key, "t" | "w") {
+    if modifiers.control && modifiers.alt && matches!(key, "t" | "w" | "d") {
         return true;
     }
     if modifiers.control && key == "," {
@@ -731,7 +785,8 @@ fn apply_terminal_theme(terminal: &mut Terminal, colors: theme::Colors) -> Resul
     terminal
         .set_default_fg_color(Some(ghostty_rgb(colors.term_fg)))?
         .set_default_bg_color(Some(ghostty_rgb(colors.term_bg)))?
-        .set_default_cursor_color(Some(ghostty_rgb(colors.cursor)))?;
+        .set_default_cursor_color(Some(ghostty_rgb(colors.cursor)))?
+        .set_default_cursor_blink(Some(true))?;
 
     let mut palette = terminal.default_color_palette()?;
     let indexes = [

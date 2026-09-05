@@ -691,6 +691,7 @@ pub fn paint(
     font: &Font,
     font_size: Pixels,
     hovered: Option<&LinkHit>,
+    focused: bool,
     window: &mut Window,
     cx: &mut gpui::App,
 ) {
@@ -741,7 +742,7 @@ pub fn paint(
 
         // A block cursor is painted under glyphs so the current cell stays
         // readable and lines up with the same grid used for text.
-        if crate::config::cursor_shape(cx) == crate::config::CursorShape::Block {
+        if focused && crate::config::cursor_shape(cx) == crate::config::CursorShape::Block {
             if let Some(cursor) = frame.cursor.filter(|cursor| cursor.y as usize == row_idx) {
                 window.paint_quad(fill(
                     Bounds {
@@ -762,7 +763,7 @@ pub fn paint(
         }
 
         // A bar cursor sits on top of the glyph so it stays visible.
-        if crate::config::cursor_shape(cx) == crate::config::CursorShape::Bar {
+        if focused && crate::config::cursor_shape(cx) == crate::config::CursorShape::Bar {
             if let Some(cursor) = frame.cursor.filter(|cursor| cursor.y as usize == row_idx) {
                 let width = (cell.x * 0.12).max(px(1.5));
                 window.paint_quad(fill(

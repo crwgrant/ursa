@@ -5,16 +5,20 @@ mod cwd;
 mod frame;
 mod input;
 mod notify;
+mod panes;
 mod pty;
 mod session;
 mod settings;
 mod theme;
 
+use std::collections::HashMap;
+
 use gpui::{
-    Action, AnyElement, AnyView, App, Application, Bounds, Context, CursorStyle, DragMoveEvent, KeyBinding, Menu, MenuItem,
-    MouseButton, MouseDownEvent, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, point,
-    prelude::*, px, rgb, size,
+    Action, AnyElement, AnyView, App, Application, Bounds, Context, CursorStyle, DragMoveEvent, KeyBinding, KeyDownEvent,
+    Keystroke, Menu, MenuItem, MouseButton, MouseDownEvent, Pixels, SharedString, TitlebarOptions, Window, WindowBounds,
+    WindowOptions, actions, canvas, div, point, prelude::*, px, rgb, size,
 };
+use panes::{PaneSpec, SplitAxis};
 use session::{Session, SessionEvent, TabRestore};
 
 actions!(
@@ -29,7 +33,11 @@ actions!(
         Copy,
         Paste,
         ClearScreen,
-        OpenSettings
+        OpenSettings,
+        SplitRight,
+        SplitDown,
+        FocusNextPane,
+        FocusPrevPane
     ]
 );
 
@@ -49,47 +57,29 @@ pub(crate) const APP_ID: &str = "com.crwgrant.ghostterm";
 const WINDOW_WIDTH: f32 = 1100.0;
 const WINDOW_HEIGHT: f32 = 720.0;
 const NEW_WINDOW_OFFSET: f32 = 28.0;
+const PANE_MIN: f32 = 80.0;
 
-struct SessionGroup {
-    tabs: Vec<gpui::Entity<Session>>,
-    active: usize,
+enum PaneNode {
+    Leaf {
+        session: gpui::Entity<Session>,
+    },
+    Split {
+        id: u64,
+        axis: SplitAxis,
+        ratio: f32,
+        first: Box<PaneNode>,
+        second: Box<PaneNode>,
+    },
 }
 
-impl SessionGroup {
-    fn spawn(window: &mut Window, cx: &mut Context<Workspace>) -> Self {
-        Self::spawn_tabs(1, 0, Vec::new(), window, cx)
-    }
+struct Tab {
+    root: PaneNode,
+    focused: usize,
+}
 
-    fn spawn_tabs(
-        count: usize,
-        active: usize,
-        restores: Vec<TabRestore>,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) -> Self {
-        let count = count.max(1);
-        let tabs = (0..count)
-            .map(|index| {
-                let restore = restores.get(index).cloned().unwrap_or_default();
-                cx.new(|cx| Session::spawn(index, window, cx, restore))
-            })
-            .collect();
-        Self {
-            tabs,
-            active: active.min(count - 1),
-        }
-    }
-
-    fn title(&self, cx: &App) -> SharedString {
-        self.tabs
-            .get(self.active)
-            .map(|tab| SharedString::from(tab.read(cx).title.clone()))
-            .unwrap_or_else(|| SharedString::from("Session"))
-    }
-
-    fn active_tab(&self) -> Option<&gpui::Entity<Session>> {
-        self.tabs.get(self.active)
-    }
+struct SessionGroup {
+    tabs: Vec<Tab>,
+    active: usize,
 }
 
 struct Workspace {
@@ -99,6 +89,9 @@ struct Workspace {
     sidebar_split_locked: bool,
     dragging_tab: Option<usize>,
     tab_insert_at: Option<usize>,
+    next_split_id: u64,
+    pane_bounds: HashMap<u64, Bounds<Pixels>>,
+    pane_split_locked: bool,
 }
 
 #[derive(Clone)]
@@ -144,6 +137,336 @@ impl Render for SplitDragPreview {
     }
 }
 
+#[derive(Clone)]
+struct PaneSplit {
+    id: u64,
+}
+
+impl PaneNode {
+    fn leaf(session: gpui::Entity<Session>) -> Self {
+        Self::Leaf { session }
+    }
+
+    fn spec(&self) -> PaneSpec {
+        match self {
+            Self::Leaf { .. } => PaneSpec::Leaf,
+            Self::Split {
+                axis,
+                ratio,
+                first,
+                second,
+                ..
+            } => PaneSpec::Split {
+                axis: *axis,
+                ratio: *ratio,
+                first: Box::new(first.spec()),
+                second: Box::new(second.spec()),
+            },
+        }
+    }
+
+    fn leaf_count(&self) -> usize {
+        match self {
+            Self::Leaf { .. } => 1,
+            Self::Split { first, second, .. } => first.leaf_count() + second.leaf_count(),
+        }
+    }
+
+    fn leaves(&self) -> Vec<&gpui::Entity<Session>> {
+        match self {
+            Self::Leaf { session } => vec![session],
+            Self::Split { first, second, .. } => {
+                let mut leaves = first.leaves();
+                leaves.extend(second.leaves());
+                leaves
+            }
+        }
+    }
+
+    fn leaf_at(&self, index: usize) -> Option<&gpui::Entity<Session>> {
+        self.leaves().into_iter().nth(index)
+    }
+
+    fn find(&self, session: &gpui::Entity<Session>) -> Option<usize> {
+        self.leaves().iter().position(|leaf| *leaf == session)
+    }
+
+    fn assign_ids(&mut self, next: &mut u64) {
+        if let Self::Split { id, first, second, .. } = self {
+            *id = *next;
+            *next += 1;
+            first.assign_ids(next);
+            second.assign_ids(next);
+        }
+    }
+
+    fn split_axis(&self, id: u64) -> Option<SplitAxis> {
+        match self {
+            Self::Leaf { .. } => None,
+            Self::Split {
+                id: split_id,
+                axis,
+                first,
+                second,
+                ..
+            } => {
+                if *split_id == id {
+                    Some(*axis)
+                } else {
+                    first.split_axis(id).or_else(|| second.split_axis(id))
+                }
+            }
+        }
+    }
+
+    fn equalize(&mut self) {
+        if let Self::Split {
+            ratio, first, second, ..
+        } = self
+        {
+            first.equalize();
+            second.equalize();
+            *ratio = panes::equal_split_ratio(first.leaf_count(), second.leaf_count());
+        }
+    }
+
+    fn set_ratio(&mut self, id: u64, ratio: f32) -> bool {
+        match self {
+            Self::Leaf { .. } => false,
+            Self::Split {
+                id: split_id,
+                ratio: current,
+                first,
+                second,
+                ..
+            } => {
+                if *split_id == id {
+                    *current = panes::clamp_ratio(ratio);
+                    true
+                } else {
+                    first.set_ratio(id, ratio) || second.set_ratio(id, ratio)
+                }
+            }
+        }
+    }
+
+    fn split_leaf(&mut self, index: usize, axis: SplitAxis, session: gpui::Entity<Session>, id: u64) -> Option<usize> {
+        match self {
+            Self::Leaf { session: existing } if index == 0 => {
+                let first = existing.clone();
+                *self = Self::Split {
+                    id,
+                    axis,
+                    ratio: 0.5,
+                    first: Box::new(Self::leaf(first)),
+                    second: Box::new(Self::leaf(session)),
+                };
+                Some(1)
+            }
+            Self::Split { first, second, .. } => {
+                let left = first.leaf_count();
+                if index < left {
+                    first.split_leaf(index, axis, session, id)
+                } else {
+                    second
+                        .split_leaf(index - left, axis, session, id)
+                        .map(|focused| left + focused)
+                }
+            }
+            Self::Leaf { .. } => None,
+        }
+    }
+
+    fn remove_leaf(self, index: usize) -> Result<Self, Self> {
+        match self {
+            Self::Leaf { .. } => Err(self),
+            Self::Split {
+                id,
+                axis,
+                ratio,
+                first,
+                second,
+            } => {
+                let left = first.leaf_count();
+                if index < left {
+                    match first.remove_leaf(index) {
+                        Ok(first) => Ok(Self::Split {
+                            id,
+                            axis,
+                            ratio,
+                            first: Box::new(first),
+                            second,
+                        }),
+                        Err(_) => Ok(*second),
+                    }
+                } else {
+                    match second.remove_leaf(index - left) {
+                        Ok(second) => Ok(Self::Split {
+                            id,
+                            axis,
+                            ratio,
+                            first,
+                            second: Box::new(second),
+                        }),
+                        Err(_) => Ok(*first),
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl Tab {
+    fn from_leaf(session: gpui::Entity<Session>) -> Self {
+        Self {
+            root: PaneNode::leaf(session),
+            focused: 0,
+        }
+    }
+
+    fn title(&self, cx: &App) -> SharedString {
+        self.focused_session()
+            .map(|session| SharedString::from(session.read(cx).title.clone()))
+            .unwrap_or_else(|| SharedString::from("Tab"))
+    }
+
+    fn focused_session(&self) -> Option<&gpui::Entity<Session>> {
+        self.root.leaf_at(self.focused)
+    }
+
+    fn used(&self, cx: &App) -> bool {
+        self.root.leaves().iter().any(|session| session.read(cx).used)
+    }
+}
+
+impl SessionGroup {
+    fn spawn(window: &mut Window, cx: &mut Context<Workspace>) -> Self {
+        let session = cx.new(|cx| Session::spawn(0, window, cx, TabRestore::default()));
+        Self {
+            tabs: vec![Tab::from_leaf(session)],
+            active: 0,
+        }
+    }
+
+    fn spawn_tabs(
+        count: usize,
+        active: usize,
+        restores: Vec<config::TabLayout>,
+        snapshot_session: usize,
+        load_snapshots: bool,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Self {
+        let count = count.max(1);
+        let tabs = (0..count)
+            .map(|index| {
+                let layout = restores.get(index).cloned().unwrap_or_default();
+                Tab::from_layout(index, layout, snapshot_session, load_snapshots, window, cx)
+            })
+            .collect();
+        Self {
+            tabs,
+            active: active.min(count - 1),
+        }
+    }
+
+    fn title(&self, cx: &App) -> SharedString {
+        self.tabs
+            .get(self.active)
+            .map(|tab| tab.title(cx))
+            .unwrap_or_else(|| SharedString::from("Session"))
+    }
+
+    fn active_tab(&self) -> Option<&Tab> {
+        self.tabs.get(self.active)
+    }
+
+    fn focused_session(&self) -> Option<&gpui::Entity<Session>> {
+        self.active_tab().and_then(Tab::focused_session)
+    }
+}
+
+impl Tab {
+    fn from_layout(
+        index: usize,
+        layout: config::TabLayout,
+        snapshot_session: usize,
+        load_snapshots: bool,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Self {
+        let mut restores = layout.cwds.into_iter();
+        let mut pane = 0;
+        let root = spawn_pane_spec(
+            &layout.spec,
+            index,
+            snapshot_session,
+            load_snapshots,
+            &mut pane,
+            &mut restores,
+            window,
+            cx,
+        );
+        let focused = layout.focused.min(root.leaf_count().saturating_sub(1));
+        Self { root, focused }
+    }
+}
+
+fn spawn_pane_spec(
+    spec: &PaneSpec,
+    tab_index: usize,
+    snapshot_session: usize,
+    load_snapshots: bool,
+    pane: &mut usize,
+    restores: &mut impl Iterator<Item = Option<std::path::PathBuf>>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> PaneNode {
+    match spec {
+        PaneSpec::Leaf => {
+            let pane_index = *pane;
+            *pane += 1;
+            let restore = TabRestore {
+                cwd: restores.next().flatten(),
+                snapshot: load_snapshots
+                    .then(|| config::read_pane_snapshot(snapshot_session, tab_index, pane_index))
+                    .flatten(),
+            };
+            PaneNode::leaf(cx.new(|cx| Session::spawn(tab_index, window, cx, restore)))
+        }
+        PaneSpec::Split {
+            axis,
+            ratio,
+            first,
+            second,
+        } => PaneNode::Split {
+            id: 0,
+            axis: *axis,
+            ratio: *ratio,
+            first: Box::new(spawn_pane_spec(
+                first,
+                tab_index,
+                snapshot_session,
+                load_snapshots,
+                pane,
+                restores,
+                window,
+                cx,
+            )),
+            second: Box::new(spawn_pane_spec(
+                second,
+                tab_index,
+                snapshot_session,
+                load_snapshots,
+                pane,
+                restores,
+                window,
+                cx,
+            )),
+        },
+    }
+}
+
 impl Workspace {
     fn new(restore: bool, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let layout = if restore {
@@ -167,23 +490,21 @@ impl Workspace {
             .enumerate()
             .map(|(session_index, spec)| {
                 let snapshot_session = snapshot_session.unwrap_or(session_index);
-                let restores = (0..spec.tabs)
-                    .map(|tab| TabRestore {
-                        cwd: spec.cwds.get(tab).cloned().flatten(),
-                        snapshot: config::read_tab_snapshot(snapshot_session, tab),
-                    })
-                    .collect();
-                SessionGroup::spawn_tabs(spec.tabs, spec.active, restores, window, cx)
+                SessionGroup::spawn_tabs(spec.tabs, spec.active, spec.tab_specs.clone(), snapshot_session, restore, window, cx)
             })
             .collect::<Vec<_>>();
-        let workspace = Self {
+        let mut workspace = Self {
             sessions,
             active_session: layout.active_session,
             sidebar_width: config::restored_sidebar_width(),
             sidebar_split_locked: false,
             dragging_tab: None,
             tab_insert_at: None,
+            next_split_id: 0,
+            pane_bounds: HashMap::new(),
+            pane_split_locked: false,
         };
+        workspace.assign_all_split_ids();
         for index in 0..workspace.sessions.len() {
             workspace.subscribe_group(index, window, cx);
         }
@@ -213,12 +534,22 @@ impl Workspace {
         workspace
     }
 
+    fn assign_all_split_ids(&mut self) {
+        for group in &mut self.sessions {
+            for tab in &mut group.tabs {
+                tab.root.assign_ids(&mut self.next_split_id);
+            }
+        }
+    }
+
     fn subscribe_group(&self, session: usize, window: &Window, cx: &mut Context<Self>) {
         let Some(group) = self.sessions.get(session) else {
             return;
         };
         for tab in &group.tabs {
-            self.subscribe_terminal(tab, window, cx);
+            for leaf in tab.root.leaves() {
+                self.subscribe_terminal(leaf, window, cx);
+            }
         }
     }
 
@@ -235,8 +566,19 @@ impl Workspace {
         .detach();
     }
 
-    fn active_tab(&self) -> Option<&gpui::Entity<Session>> {
+    fn active_tab(&self) -> Option<&Tab> {
         self.sessions.get(self.active_session).and_then(SessionGroup::active_tab)
+    }
+
+    fn active_tab_mut(&mut self) -> Option<&mut Tab> {
+        let session = self.active_session;
+        self.sessions
+            .get_mut(session)
+            .and_then(|group| group.tabs.get_mut(group.active))
+    }
+
+    fn focused_session(&self) -> Option<&gpui::Entity<Session>> {
+        self.sessions.get(self.active_session).and_then(SessionGroup::focused_session)
     }
 
     fn add_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -258,10 +600,10 @@ impl Workspace {
             return;
         };
         let index = group.tabs.len();
-        let tab = cx.new(|cx| Session::spawn(index, window, cx, TabRestore::default()));
-        group.tabs.push(tab.clone());
+        let session = cx.new(|cx| Session::spawn(index, window, cx, TabRestore::default()));
+        group.tabs.push(Tab::from_leaf(session.clone()));
         group.active = index;
-        self.subscribe_terminal(&tab, window, cx);
+        self.subscribe_terminal(&session, window, cx);
         self.focus_active(window, cx);
         self.persist_layout(cx);
         cx.notify();
@@ -292,9 +634,52 @@ impl Workspace {
 
     fn close_terminal(&mut self, session: &gpui::Entity<Session>, window: &mut Window, cx: &mut Context<Self>) {
         for (session_index, group) in self.sessions.iter().enumerate() {
-            if let Some(tab_index) = group.tabs.iter().position(|tab| tab == session) {
+            for (tab_index, tab) in group.tabs.iter().enumerate() {
+                if let Some(leaf) = tab.root.find(session) {
+                    self.close_pane_leaf(session_index, tab_index, leaf, window, cx);
+                    return;
+                }
+            }
+        }
+    }
+
+    fn close_pane_leaf(
+        &mut self,
+        session_index: usize,
+        tab_index: usize,
+        leaf: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab) = self.sessions.get(session_index).and_then(|group| group.tabs.get(tab_index)) else {
+            return;
+        };
+        if tab.root.leaf_count() <= 1 {
+            self.close_pane_tab(session_index, tab_index, window, cx);
+            return;
+        }
+        let Some(group) = self.sessions.get_mut(session_index) else {
+            return;
+        };
+        let Some(tab) = group.tabs.get_mut(tab_index) else {
+            return;
+        };
+        let Some(placeholder) = tab.root.leaf_at(0).cloned() else {
+            return;
+        };
+        let root = std::mem::replace(&mut tab.root, PaneNode::leaf(placeholder));
+        match root.remove_leaf(leaf) {
+            Ok(root) => {
+                let remaining = root.leaf_count();
+                tab.root = root;
+                tab.focused = focus_after_remove(tab.focused, leaf, remaining);
+                self.focus_active(window, cx);
+                self.persist_layout(cx);
+                cx.notify();
+            }
+            Err(root) => {
+                tab.root = root;
                 self.close_pane_tab(session_index, tab_index, window, cx);
-                return;
             }
         }
     }
@@ -340,10 +725,13 @@ impl Workspace {
 
     fn close_active_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let session = self.active_session;
-        let Some(tab) = self.sessions.get(session).map(|group| group.active) else {
+        let Some((tab, leaf)) = self.sessions.get(session).and_then(|group| {
+            let tab = group.active;
+            group.tabs.get(tab).map(|pane| (tab, pane.focused))
+        }) else {
             return;
         };
-        self.close_pane_tab(session, tab, window, cx);
+        self.close_pane_leaf(session, tab, leaf, window, cx);
     }
 
     fn close_active_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -354,37 +742,153 @@ impl Workspace {
     }
 
     fn focus_active(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(tab) = self.active_tab() {
-            tab.update(cx, |session, _cx| session.focus(window));
+        if let Some(session) = self.focused_session().cloned() {
+            session.update(cx, |session, _cx| session.focus(window));
+        }
+        self.refresh_pane_cursors(cx);
+    }
+
+    fn refresh_pane_cursors(&self, cx: &mut Context<Self>) {
+        let Some(tab) = self.active_tab() else {
+            return;
+        };
+        for session in tab.root.leaves() {
+            session.update(cx, |_, cx| cx.notify());
         }
     }
 
+    fn focus_leaf(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.active_tab_mut() else {
+            return;
+        };
+        if index >= tab.root.leaf_count() {
+            return;
+        }
+        let changed = tab.focused != index;
+        tab.focused = index;
+        if let Some(session) = tab.focused_session().cloned() {
+            session.update(cx, |session, _| session.focus(window));
+        }
+        self.refresh_pane_cursors(cx);
+        if changed {
+            self.persist_layout(cx);
+        }
+        cx.notify();
+    }
+
+    fn focus_offset(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.active_tab_mut() else {
+            return;
+        };
+        tab.focused = panes::wrap_focus(tab.focused, tab.root.leaf_count(), delta);
+        self.focus_active(window, cx);
+        self.persist_layout(cx);
+        cx.notify();
+    }
+
+    fn split_focused(&mut self, axis: SplitAxis, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.active_tab() else {
+            return;
+        };
+        if tab.root.leaf_count() >= panes::MAX_PANES {
+            return;
+        }
+        let cwd = tab.focused_session().and_then(|session| session.read(cx).cwd.clone());
+        let tab_index = self.sessions.get(self.active_session).map(|group| group.active).unwrap_or(0);
+        let session = cx.new(|cx| Session::spawn(tab_index, window, cx, TabRestore { cwd, snapshot: None }));
+        let id = self.next_split_id;
+        self.next_split_id += 1;
+        let Some(tab) = self.active_tab_mut() else {
+            return;
+        };
+        let focused = tab.focused;
+        if let Some(next) = tab.root.split_leaf(focused, axis, session.clone(), id) {
+            tab.root.equalize();
+            tab.focused = next;
+            self.subscribe_terminal(&session, window, cx);
+            self.focus_active(window, cx);
+            self.persist_layout(cx);
+            cx.notify();
+        }
+    }
+
+    fn resize_split(&mut self, id: u64, position: gpui::Point<Pixels>, cx: &mut Context<Self>) {
+        let Some(bounds) = self.pane_bounds.get(&id).copied() else {
+            return;
+        };
+        let Some(axis) = self
+            .sessions
+            .iter()
+            .find_map(|group| group.tabs.iter().find_map(|tab| tab.root.split_axis(id)))
+        else {
+            return;
+        };
+        let ratio = match axis {
+            SplitAxis::Horizontal => {
+                let width = f32::from(bounds.size.width).max(1.0);
+                (f32::from(position.x) - f32::from(bounds.origin.x)) / width
+            }
+            SplitAxis::Vertical => {
+                let height = f32::from(bounds.size.height).max(1.0);
+                (f32::from(position.y) - f32::from(bounds.origin.y)) / height
+            }
+        };
+        if self.active_tab_mut().is_some_and(|tab| tab.root.set_ratio(id, ratio)) {
+            cx.notify();
+        }
+    }
+
+    fn reset_split_ratio(&mut self, id: u64, cx: &mut Context<Self>) {
+        self.pane_split_locked = true;
+        if self.active_tab_mut().is_some_and(|tab| tab.root.set_ratio(id, 0.5)) {
+            self.persist_layout(cx);
+            cx.notify();
+        }
+    }
+
+    fn finish_pane_resize(&mut self, cx: &mut Context<Self>) {
+        self.pane_split_locked = false;
+        self.persist_layout(cx);
+    }
+
     fn can_copy(&self, cx: &App) -> bool {
-        self.active_tab().is_some_and(|tab| tab.read(cx).has_selection())
+        self.focused_session().is_some_and(|session| session.read(cx).has_selection())
     }
 
     fn copy_active(&self, cx: &mut Context<Self>) {
-        if let Some(tab) = self.active_tab() {
-            tab.update(cx, |session, cx| session.copy_selection(cx));
+        if let Some(session) = self.focused_session().cloned() {
+            session.update(cx, |session, cx| session.copy_selection(cx));
         }
     }
 
     fn paste_active(&self, cx: &mut Context<Self>) {
-        if let Some(tab) = self.active_tab() {
-            tab.update(cx, |session, cx| session.paste_clipboard(cx));
+        if let Some(session) = self.focused_session().cloned() {
+            session.update(cx, |session, cx| session.paste_clipboard(cx));
         }
     }
 
     fn clear_active(&self, cx: &mut Context<Self>) {
-        if let Some(tab) = self.active_tab() {
-            tab.update(cx, |session, _cx| session.clear_screen());
+        if let Some(session) = self.focused_session().cloned() {
+            session.update(cx, |session, _cx| session.clear_screen());
         }
+    }
+
+    fn forward_tab_to_focused(&self, keystroke: &Keystroke, cx: &mut Context<Self>) -> bool {
+        if keystroke.key != "tab" || keystroke.modifiers.platform || keystroke.modifiers.control || keystroke.modifiers.alt {
+            return false;
+        }
+        let Some(session) = self.focused_session().cloned() else {
+            return false;
+        };
+        session.update(cx, |session, cx| session.send_keystroke(keystroke, cx))
     }
 
     fn apply_config(&self, cx: &mut Context<Self>) {
         for group in &self.sessions {
             for tab in &group.tabs {
-                tab.update(cx, |session, cx| session.apply_config(cx));
+                for session in tab.root.leaves() {
+                    session.update(cx, |session, cx| session.apply_config(cx));
+                }
             }
         }
     }
@@ -462,30 +966,48 @@ impl Workspace {
     }
 
     fn write_layout(&self, cx: &mut Context<Self>, flush: bool) {
-        let (tab_count, used) = self
+        let (tab_count, leaf_count, used) = self
             .sessions
             .first()
-            .map(|group| (group.tabs.len(), group.tabs.first().is_some_and(|tab| tab.read(cx).used)))
-            .unwrap_or((0, false));
-        if !config::persist_sessions(cx) || is_fresh_workspace(self.sessions.len(), tab_count, used) {
+            .map(|group| {
+                let tab = group.tabs.first();
+                (
+                    group.tabs.len(),
+                    tab.map(|tab| tab.root.leaf_count()).unwrap_or(0),
+                    tab.is_some_and(|tab| tab.used(cx)),
+                )
+            })
+            .unwrap_or((0, 0, false));
+        if !config::persist_sessions(cx) || is_fresh_workspace(self.sessions.len(), tab_count, leaf_count, used) {
             config::save_workspace_layout(config::WorkspaceLayout::default());
             config::clear_tab_snapshots();
             return;
         }
         for group in &self.sessions {
             for tab in &group.tabs {
-                tab.update(cx, |session, _| session.refresh_cwd());
+                for session in tab.root.leaves() {
+                    session.update(cx, |session, _| session.refresh_cwd());
+                }
             }
         }
         let sessions = self
             .sessions
             .iter()
-            .map(|group| {
-                let cwds = group.tabs.iter().map(|tab| tab.read(cx).cwd.clone()).collect();
-                (group.tabs.len(), group.active, cwds)
+            .map(|group| config::SessionLayout {
+                tabs: group.tabs.len(),
+                active: group.active,
+                tab_specs: group
+                    .tabs
+                    .iter()
+                    .map(|tab| config::TabLayout {
+                        spec: tab.root.spec(),
+                        focused: tab.focused,
+                        cwds: tab.root.leaves().iter().map(|session| session.read(cx).cwd.clone()).collect(),
+                    })
+                    .collect(),
             })
-            .collect::<Vec<_>>();
-        let layout = config::WorkspaceLayout::from_workspace(&sessions, self.active_session);
+            .collect();
+        let layout = config::WorkspaceLayout::from_sessions(sessions, self.active_session);
         let layout = if config::sessions_enabled(cx) {
             layout
         } else {
@@ -494,11 +1016,13 @@ impl Workspace {
         config::save_workspace_layout(layout.clone());
         for (session_index, group) in self.sessions.iter().enumerate() {
             for (tab_index, tab) in group.tabs.iter().enumerate() {
-                let path = config::tab_snapshot_path(session_index, tab_index);
-                if flush {
-                    tab.read(cx).flush_state(path);
-                } else {
-                    tab.read(cx).request_save_state(path);
+                for (pane_index, session) in tab.root.leaves().into_iter().enumerate() {
+                    let path = config::pane_snapshot_path(session_index, tab_index, pane_index);
+                    if flush {
+                        session.read(cx).flush_state(path);
+                    } else {
+                        session.read(cx).request_save_state(path);
+                    }
                 }
             }
         }
@@ -506,8 +1030,19 @@ impl Workspace {
     }
 }
 
-fn is_fresh_workspace(session_count: usize, tab_count: usize, tab_used: bool) -> bool {
-    session_count == 1 && tab_count == 1 && !tab_used
+fn is_fresh_workspace(session_count: usize, tab_count: usize, leaf_count: usize, tab_used: bool) -> bool {
+    session_count == 1 && tab_count == 1 && leaf_count == 1 && !tab_used
+}
+
+fn focus_after_remove(focused: usize, removed: usize, remaining: usize) -> usize {
+    let remaining = remaining.max(1);
+    if focused == removed {
+        focused.min(remaining - 1)
+    } else if focused > removed {
+        (focused - 1).min(remaining - 1)
+    } else {
+        focused.min(remaining - 1)
+    }
 }
 
 fn tab_destination(from: usize, insert_at: usize, len: usize) -> Option<usize> {
@@ -567,6 +1102,15 @@ impl Render for Workspace {
                 el.on_action(cx.listener(|this, _: &Paste, _window, cx| this.paste_active(cx)))
             })
             .on_action(cx.listener(|this, _: &ClearScreen, _window, cx| this.clear_active(cx)))
+            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                if this.forward_tab_to_focused(&event.keystroke, cx) {
+                    cx.stop_propagation();
+                }
+            }))
+            .on_action(cx.listener(|this, _: &SplitRight, window, cx| this.split_focused(SplitAxis::Horizontal, window, cx)))
+            .on_action(cx.listener(|this, _: &SplitDown, window, cx| this.split_focused(SplitAxis::Vertical, window, cx)))
+            .on_action(cx.listener(|this, _: &FocusNextPane, window, cx| this.focus_offset(1, window, cx)))
+            .on_action(cx.listener(|this, _: &FocusPrevPane, window, cx| this.focus_offset(-1, window, cx)))
             .on_action(|_: &OpenSettings, _window, cx| crate::settings::open(cx))
             .when(config::sessions_enabled(cx), |workspace| {
                 workspace.child(self.render_sidebar(&tabs, cx)).child(self.render_split(cx))
@@ -662,9 +1206,12 @@ impl Workspace {
             .tabs
             .iter()
             .enumerate()
-            .map(|(index, tab)| (index, SharedString::from(tab.read(cx).title.clone()), index == group.active))
+            .map(|(index, tab)| (index, tab.title(cx), index == group.active))
             .collect();
-        let terminal = group.active_tab().cloned();
+        let panes = group.active_tab().map(|tab| {
+            let show_focus = tab.root.leaf_count() > 1;
+            self.render_pane_node(&tab.root, tab.focused, 0, show_focus, cx)
+        });
         div()
             .flex()
             .flex_col()
@@ -672,7 +1219,143 @@ impl Workspace {
             .h_full()
             .min_w_0()
             .child(self.render_pane_tabs(&tabs, cx))
-            .when_some(terminal, |pane, tab| pane.child(div().flex_1().min_h_0().min_w_0().child(tab)))
+            .when_some(panes, |pane, tree| pane.child(div().flex_1().min_h_0().min_w_0().child(tree)))
+    }
+
+    fn render_pane_node(
+        &self,
+        node: &PaneNode,
+        focused: usize,
+        offset: usize,
+        show_focus: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        match node {
+            PaneNode::Leaf { session } => {
+                let colors = theme::colors(cx);
+                let is_focused = focused == offset;
+                div()
+                    .id(("pane-leaf", offset))
+                    .size_full()
+                    .min_w(px(PANE_MIN))
+                    .min_h(px(PANE_MIN))
+                    .overflow_hidden()
+                    .when(show_focus && is_focused, |pane| pane.border_1().border_color(rgb(colors.accent)))
+                    .capture_any_mouse_down(cx.listener(move |this, _, window, cx| {
+                        this.focus_leaf(offset, window, cx);
+                    }))
+                    .child(session.clone())
+                    .into_any_element()
+            }
+            PaneNode::Split {
+                id,
+                axis,
+                ratio,
+                first,
+                second,
+            } => {
+                let id = *id;
+                let colors = theme::colors(cx);
+                let left = first.leaf_count();
+                let first = self.render_pane_node(first, focused, offset, show_focus, cx);
+                let second = self.render_pane_node(second, focused, offset + left, show_focus, cx);
+                let entity = cx.entity();
+                let horizontal = *axis == SplitAxis::Horizontal;
+                div()
+                    .id(("pane-split", id as usize))
+                    .relative()
+                    .flex()
+                    .when(horizontal, |el| el.flex_row())
+                    .when(!horizontal, |el| el.flex_col())
+                    .size_full()
+                    .min_w_0()
+                    .min_h_0()
+                    .child(
+                        canvas(
+                            move |bounds, _, cx| {
+                                entity.update(cx, |this, _| {
+                                    this.pane_bounds.insert(id, bounds);
+                                });
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .size_full(),
+                    )
+                    .child(split_pane_slot(*ratio, horizontal, first))
+                    .child(self.render_pane_gutter(id, *axis, colors, cx))
+                    .child(split_pane_slot(1.0 - *ratio, horizontal, second))
+                    .into_any_element()
+            }
+        }
+    }
+}
+
+fn split_pane_slot(grow: f32, horizontal: bool, child: AnyElement) -> impl IntoElement {
+    let mut slot = div()
+        .flex_1()
+        .when(horizontal, |el| el.h_full())
+        .when(!horizontal, |el| el.w_full())
+        .min_w(px(PANE_MIN))
+        .min_h(px(PANE_MIN))
+        .overflow_hidden()
+        .child(child);
+    slot.style().flex_grow = Some(grow.max(0.01));
+    slot
+}
+
+impl Workspace {
+    fn render_pane_gutter(&self, id: u64, axis: SplitAxis, colors: theme::Colors, cx: &mut Context<Self>) -> impl IntoElement {
+        let horizontal = axis == SplitAxis::Horizontal;
+        div()
+            .relative()
+            .flex_shrink_0()
+            .when(horizontal, |el| el.w(px(1.0)).h_full())
+            .when(!horizontal, |el| el.h(px(1.0)).w_full())
+            .bg(rgb(colors.sidebar_border))
+            .child(
+                div()
+                    .id(("pane-gutter", id as usize))
+                    .absolute()
+                    .when(horizontal, |el| el.top_0().bottom_0().left(px(-3.0)).w(px(7.0)))
+                    .when(!horizontal, |el| el.left_0().right_0().top(px(-3.0)).h(px(7.0)))
+                    .cursor(if horizontal {
+                        CursorStyle::ResizeColumn
+                    } else {
+                        CursorStyle::ResizeRow
+                    })
+                    .hover(move |style| style.bg(rgb(colors.accent)))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                            cx.stop_propagation();
+                            if event.click_count >= 2 {
+                                this.reset_split_ratio(id, cx);
+                            } else {
+                                this.pane_split_locked = false;
+                            }
+                        }),
+                    )
+                    .on_drag(PaneSplit { id }, |_, _, _, cx| cx.new(|_| SplitDragPreview))
+                    .on_drag_move(cx.listener(move |this, event: &DragMoveEvent<PaneSplit>, _, cx| {
+                        if this.pane_split_locked || event.drag(cx).id != id {
+                            return;
+                        }
+                        this.resize_split(id, event.event.position, cx);
+                    }))
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            this.finish_pane_resize(cx);
+                        }),
+                    )
+                    .on_mouse_up_out(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            this.finish_pane_resize(cx);
+                        }),
+                    ),
+            )
     }
 
     fn render_pane_tabs(&self, tabs: &[(usize, SharedString, bool)], cx: &mut Context<Self>) -> impl IntoElement {
@@ -1155,7 +1838,13 @@ fn settings_shortcut() -> &'static str {
 }
 
 fn view_menu(sessions_enabled: bool) -> Menu {
-    let mut items = vec![MenuItem::action("Clear Screen", ClearScreen), MenuItem::separator()];
+    let mut items = vec![
+        MenuItem::action("Clear Screen", ClearScreen),
+        MenuItem::separator(),
+        MenuItem::action("Focus Next Pane", FocusNextPane),
+        MenuItem::action("Focus Previous Pane", FocusPrevPane),
+        MenuItem::separator(),
+    ];
     if sessions_enabled {
         items.push(MenuItem::action("Close Session", CloseSession));
         items.push(MenuItem::separator());
@@ -1181,6 +1870,8 @@ fn file_menu(sessions_enabled: bool) -> Menu {
         items.push(MenuItem::action("New Session", NewSession));
     }
     items.push(MenuItem::action("New Tab", NewTab));
+    items.push(MenuItem::action("Split Right", SplitRight));
+    items.push(MenuItem::action("Split Down", SplitDown));
     items.push(MenuItem::separator());
     items.push(MenuItem::action("Close Tab", CloseTab));
     if sessions_enabled {
@@ -1238,6 +1929,14 @@ fn workspace_key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-shift-w", CloseTab, None),
         KeyBinding::new("ctrl-shift-c", Copy, None),
         KeyBinding::new("ctrl-shift-v", Paste, None),
+        KeyBinding::new("cmd-d", SplitRight, None),
+        KeyBinding::new("cmd-shift-d", SplitDown, None),
+        KeyBinding::new("cmd-]", FocusNextPane, None),
+        KeyBinding::new("cmd-[", FocusPrevPane, None),
+        KeyBinding::new("ctrl-shift-d", SplitRight, None),
+        KeyBinding::new("ctrl-alt-d", SplitDown, None),
+        KeyBinding::new("ctrl-shift-]", FocusNextPane, None),
+        KeyBinding::new("ctrl-shift-[", FocusPrevPane, None),
     ];
     for number in 1..=9 {
         let index = number - 1;
@@ -1349,7 +2048,7 @@ fn workspace_window_options(cx: &App) -> WindowOptions {
 
 #[cfg(test)]
 mod tests {
-    use super::{active_after_reorder, is_fresh_workspace, tab_destination};
+    use super::{active_after_reorder, focus_after_remove, is_fresh_workspace, tab_destination};
 
     #[test]
     fn tab_destination_skips_same_slot() {
@@ -1380,10 +2079,19 @@ mod tests {
 
     #[test]
     fn unused_single_session_is_fresh() {
-        assert!(is_fresh_workspace(1, 1, false));
-        assert!(!is_fresh_workspace(1, 1, true));
-        assert!(!is_fresh_workspace(1, 2, false));
-        assert!(!is_fresh_workspace(2, 1, false));
-        assert!(!is_fresh_workspace(0, 0, false));
+        assert!(is_fresh_workspace(1, 1, 1, false));
+        assert!(!is_fresh_workspace(1, 1, 1, true));
+        assert!(!is_fresh_workspace(1, 1, 2, false));
+        assert!(!is_fresh_workspace(1, 2, 1, false));
+        assert!(!is_fresh_workspace(2, 1, 1, false));
+        assert!(!is_fresh_workspace(0, 0, 0, false));
+    }
+
+    #[test]
+    fn focus_moves_after_removing_a_pane() {
+        assert_eq!(focus_after_remove(1, 1, 2), 1);
+        assert_eq!(focus_after_remove(0, 0, 2), 0);
+        assert_eq!(focus_after_remove(2, 0, 2), 1);
+        assert_eq!(focus_after_remove(0, 1, 2), 0);
     }
 }

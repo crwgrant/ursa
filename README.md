@@ -1,11 +1,12 @@
 # Ghostterm
 
-A terminal emulator built in Rust with [GPUI](https://github.com/zed-industries/zed) and [libghostty-vt](https://github.com/uzaaft/libghostty-rs). Each window can show a left sidebar of sessions; each session has horizontal tabs and a terminal that talks to your login shell over a PTY. **Settings → Session sidebar** can hide the list so the window is only horizontal tabs.
+A terminal emulator built in Rust with [GPUI](https://github.com/zed-industries/zed) and [libghostty-vt](https://github.com/uzaaft/libghostty-rs). Each window can show a left sidebar of sessions; each session has horizontal tabs, and each tab can split into panes that each talk to your login shell over a PTY. **Settings → Session sidebar** can hide the list so the window is only horizontal tabs.
 
 ## Features
 
 - Sessions in a left sidebar: add with **⌘⇧T** or the **+** button, close with **⌘⇧W** or **×**, switch with **⌃1–⌃9**, drag to reorder; drag the right edge to resize, double-click to reset
-- Horizontal tabs per session: add with **⌘T** or the tab-bar **+**, close with **⌘W** or **×**, switch with **⌘1–⌘9**
+- Horizontal tabs per session: add with **⌘T** or the tab-bar **+**, close a tab’s last pane with **⌘W** or the tab **×**, switch with **⌘1–⌘9**
+- Split panes inside a tab: **⌘D** splits right, **⌘⇧D** splits down, **⌘] / ⌘[** move focus, click a pane to focus it; drag the gutter to resize, double-click to reset. **⌘W** closes the focused pane; the last pane closes the tab. A new pane starts in the current pane’s working directory. Up to 16 panes per tab.
 - Mouse selection: click-drag, double-click a word, triple-click a line, Option-drag for a block
 - Line and word movement: **⌘← / ⌘→** jump to the start or end of the line; **⌥← / ⌥→** move by word
 - Delete by word and line: **⌥⌫** / **⌥⌦** kill the previous or next word; **⌘⌫** / **⌘⌦** kill to the start or end of the line
@@ -15,10 +16,10 @@ A terminal emulator built in Rust with [GPUI](https://github.com/zed-industries/
 - In-app toasts for copy and paste feedback (bottom-right, click or wait to dismiss)
 - **⌘K** clears the screen and scrollback; the shell redraws the prompt at the top
 - Settings window (**⌘,** or **Ghostterm → Settings**) for theme, font family, size, cursor style, scrollback, session restore, and the session sidebar; values are stored in a Ghostterm-owned config file you can also edit by hand
-- **Settings → Session sidebar → Off** hides the sessions list and session shortcuts; only horizontal tabs remain. **Keep sessions** still restores that one session’s tabs
-- **Settings → Sessions → Keep sessions** restores sessions, tabs, working directories, and on-screen text on reopen, and keeps a tab open if its shell exits. **Close sessions** starts fresh and does not save previous sessions
+- **Settings → Session sidebar → Off** hides the sessions list and session shortcuts; only horizontal tabs remain. **Keep sessions** still restores that one session’s tabs and panes
+- **Settings → Sessions → Keep sessions** restores sessions, tabs, split panes, working directories, and on-screen text on reopen, and keeps a tab open if its shell exits. **Close sessions** starts fresh and does not save previous sessions
 - New window with **⌘N** or **File → New Window**; closing the last session leaves the app running so a Dock click (or ⌘N) can open another
-- Typing `exit` in the top-level shell closes that tab unless **Keep sessions** is on. The last tab in a session closes the session; the last session closes the window without quitting the app
+- Typing `exit` in the top-level shell closes that pane unless **Keep sessions** is on. The last pane in a tab closes the tab; the last tab in a session closes the session; the last session closes the window without quitting the app
 
 ## Requirements
 
@@ -44,7 +45,10 @@ The window title is **Ghostterm**. On macOS, `$SHELL` is used when present (othe
 | New window | ⌘N |
 | New session | ⌘⇧T |
 | New tab | ⌘T |
-| Close tab | ⌘W |
+| Split right | ⌘D |
+| Split down | ⌘⇧D |
+| Focus next / previous pane | ⌘] / ⌘[ |
+| Close pane (last pane closes the tab) | ⌘W |
 | Close session | ⌘⇧W |
 | Switch tab | ⌘1–⌘9 |
 | Switch session | ⌃1–⌃9 |
@@ -60,7 +64,7 @@ The window title is **Ghostterm**. On macOS, `$SHELL` is used when present (othe
 | Clear screen | ⌘K |
 | Settings | ⌘, |
 
-On Windows, use **Ctrl+Shift** in place of **⌘** (for example **Ctrl+Shift+T** for a new tab, **Ctrl+Alt+T** for a new session, **Ctrl+Alt+W** to close a session, **Ctrl+Shift+1–9** to switch tabs, **Ctrl+1–9** to switch sessions, **Ctrl+Shift+C** / **Ctrl+Shift+V** to copy and paste). **Ctrl+C** still goes to the shell. Settings is **Ctrl+,**.
+On Windows, use **Ctrl+Shift** in place of **⌘** (for example **Ctrl+Shift+T** for a new tab, **Ctrl+Alt+T** for a new session, **Ctrl+Alt+W** to close a session, **Ctrl+Shift+1–9** to switch tabs, **Ctrl+1–9** to switch sessions, **Ctrl+Shift+C** / **Ctrl+Shift+V** to copy and paste, **Ctrl+Shift+D** to split right, **Ctrl+Alt+D** to split down, **Ctrl+Shift+] / Ctrl+Shift+[** to move pane focus). **Ctrl+C** still goes to the shell. Settings is **Ctrl+,**.
 
 ## Configuration
 
@@ -72,7 +76,7 @@ Ghostterm reads a TOML file it owns (not libghostty). The file is created the fi
 
 If `XDG_CONFIG_HOME` is set, that directory is used instead of `~/.config`. An existing folder at the previous locations (`~/Library/Application Support/Ghostterm` on macOS, `%APPDATA%\Ghostterm` on Windows) is still used until you move it.
 
-Window position, size, which monitor it was on, the sidebar split width, and the session/tab layout are stored separately in `window.toml` in the same folder, so moving or resizing the app does not rewrite `config.toml`. Extra windows opened with ⌘N are offset from that saved frame and start with one session. If that monitor is unplugged, the window is centered on the current screen. Drag the border between the sessions list and the terminal to resize; double-click it or use **Reset to Defaults** in Settings to restore the 220px width. With **Keep sessions**, reopening restores the last sessions and tabs, each tab’s working directory, and the text that was on screen. A new shell starts in that directory (running commands are not resumed). Screen snapshots live in `state/` next to `window.toml`. **Close sessions** (the default) and quitting with only an unused tab both start clean on the next launch.
+Window position, size, which monitor it was on, the sidebar split width, and the session/tab/pane layout are stored separately in `window.toml` in the same folder, so moving or resizing the app does not rewrite `config.toml`. Extra windows opened with ⌘N are offset from that saved frame and start with one session. If that monitor is unplugged, the window is centered on the current screen. Drag the border between the sessions list and the terminal to resize; double-click it or use **Reset to Defaults** in Settings to restore the 220px width. With **Keep sessions**, reopening restores the last sessions, tabs, and split trees, each pane’s working directory, and the text that was on screen. A new shell starts in that directory (running commands are not resumed). Screen snapshots live in `state/` next to `window.toml` (`s{session}-t{tab}-p{pane}.snp`). **Close sessions** (the default) and quitting with only an unused tab both start clean on the next launch.
 
 ```toml
 [font]
@@ -122,6 +126,7 @@ The Settings window writes `config.toml` when you change a value. Editing the co
 - [x] Restore sessions, tabs, working directories, and on-screen history
 - [x] Draggable split to resize the tab sidebar vs the terminal
 - [x] Drag to reorder tabs in the sidebar
+- [x] Split panes inside a tab (right/down, focus next/prev, persist the tree)
 - [ ] Rename tabs
 - [x] Option to keep a tab open after the shell exits
 - [x] Option to turn off sessions and have simple terminal with horizontal tabs
@@ -143,8 +148,12 @@ The Settings window writes `config.toml` when you change a value. Editing the co
 
 - [ ] IME / composed input (accents, CJK, dead keys)
 - [ ] Find in scrollback (⌘F)
-- [ ] Split panes
+- [x] Split panes per tab
+- [x] Equalize split sizes
 - [x] Restore the local working directory of each tab (OSC 7 when the shell sends it, otherwise the process cwd)
+- [ ] Zoom the focused pane
+- [ ] Rotate a split
+- [ ] Tab bar per pane
 - [ ] OSC 7 remote-aware paths
 - [ ] Underline URLs and paths without holding ⌘
 - [ ] Create a test suite (see [Test suite](#test-suite))
@@ -158,7 +167,7 @@ Config parse/round-trip tests live in `src/config.rs` (`cargo test`). A broader 
 - Shift-produced characters (`:@#!` and the rest of the punctuation set) encode to the PTY
 - ⌘← / ⌘→ send beginning/end of line; ⌥← / ⌥→ send word jumps
 - ⌥⌫ / ⌥⌦ send word-kill; ⌘⌫ / ⌘⌦ send kill to start/end of line
-- Reserved shortcuts (⌘Q / ⌘⇧T / ⌘T / ⌘W / ⌘⇧W / ⌘1–⌘9 / ⌃1–⌃9 / ⌘,) are not forwarded as terminal keys
+- Reserved shortcuts (⌘Q / ⌘⇧T / ⌘T / ⌘W / ⌘⇧W / ⌘D / ⌘⇧D / ⌘[ / ⌘] / ⌘1–⌘9 / ⌃1–⌃9 / ⌘,) are not forwarded as terminal keys
 
 ### Links and paths
 
@@ -169,8 +178,9 @@ Config parse/round-trip tests live in `src/config.rs` (`cargo test`). A broader 
 
 ### Sessions and window
 
-- Top-level shell exit closes that tab, or keeps it open when `on_exit = "keep"`
-- Last tab in a session closes the session; last session closes the window without quitting the app
+- Top-level shell exit closes that pane, or keeps it open when `on_exit = "keep"`
+- Last pane in a tab closes the tab; last tab in a session closes the session; last session closes the window without quitting the app
+- Split right/down, focus next/prev, and ⌘W close the focused pane; the tree is restored from `window.toml`
 - Nested `exit` (subshell) does not close the tab
 - Adding and closing sessions and tabs updates the active index
 - `on_exit = "keep"` restores sessions on relaunch; `on_exit = "close"` does not save them
