@@ -6,8 +6,8 @@ description = "A GPUI terminal emulator powered by libghostty-vt"
 license = "MIT OR Apache-2.0"
 
 [package.metadata.packager]
-product-name = "Ghostterm"
-identifier = "com.crwgrant.ghostterm"
+product-name = "Skiff"
+identifier = "com.crwgrant.skiff"
 before-packaging-command = "cargo build --release"
 icons = ["packaging/AppIcon.icns"]
 

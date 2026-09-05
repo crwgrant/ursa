@@ -201,7 +201,7 @@ impl WindowFrame {
             .unwrap_or_default();
         format!(
             "\
-# Last Ghostterm window position and size. Updated when you move or resize the window.
+# Last Skiff window position and size. Updated when you move or resize the window.
 # `display` is the monitor UUID so the window reopens on the same screen.
 # `state` is windowed, maximized, or fullscreen. x/y/width/height are the restored windowed frame.
 # `sidebar_width` is the sessions list width in pixels.
@@ -595,9 +595,9 @@ impl Config {
         let size = format_number(self.font_size);
         format!(
             "\
-# Ghostterm configuration.
-# This file is owned by Ghostterm (not libghostty). Edit it here or use Ghostterm → Settings.
-# Unknown keys are ignored so older Ghostterm versions stay compatible.
+# Skiff configuration.
+# This file is owned by Skiff (not libghostty). Edit it here or use Skiff → Settings.
+# Unknown keys are ignored so older Skiff versions stay compatible.
 
 [font]
 # Terminal typeface. Leave empty or omit to prefer NotoMono Nerd Font, then the OS mono font.
@@ -1375,17 +1375,26 @@ fn preferred_config_dir(home: Option<&Path>, xdg_config_home: Option<&Path>) -> 
     xdg_config_home
         .map(Path::to_path_buf)
         .or_else(|| home.map(|home| home.join(".config")))
-        .map(|root| root.join("ghostterm"))
+        .map(|root| root.join("skiff"))
 }
 
 fn legacy_config_dir() -> Option<PathBuf> {
+    if let Some(home) = pty::home_dir() {
+        let xdg = std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".config"))
+            .join("ghostterm");
+        if xdg.exists() {
+            return Some(xdg);
+        }
+    }
     #[cfg(target_os = "macos")]
     {
-        pty::home_dir().map(|home| home.join("Library/Application Support/Ghostterm"))
+        return pty::home_dir().map(|home| home.join("Library/Application Support/Ghostterm"));
     }
     #[cfg(target_os = "windows")]
     {
-        std::env::var_os("APPDATA").map(|app_data| PathBuf::from(app_data).join("Ghostterm"))
+        return std::env::var_os("APPDATA").map(|app_data| PathBuf::from(app_data).join("Ghostterm"));
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
@@ -1770,11 +1779,11 @@ mod tests {
         let home = PathBuf::from("/Users/dev");
         assert_eq!(
             preferred_config_dir(Some(&home), None).as_deref(),
-            Some(Path::new("/Users/dev/.config/ghostterm"))
+            Some(Path::new("/Users/dev/.config/skiff"))
         );
         assert_eq!(
             preferred_config_dir(Some(&home), Some(Path::new("/custom/xdg"))).as_deref(),
-            Some(Path::new("/custom/xdg/ghostterm"))
+            Some(Path::new("/custom/xdg/skiff"))
         );
         assert_eq!(preferred_config_dir(None, None), None);
     }

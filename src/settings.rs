@@ -179,7 +179,7 @@ fn window_options(cx: &App, display_id: Option<DisplayId>) -> WindowOptions {
         is_resizable: true,
         is_minimizable: true,
         window_decorations: None,
-        tabbing_identifier: Some("Ghostterm Settings".into()),
+        tabbing_identifier: Some("Skiff Settings".into()),
     }
 }
 
