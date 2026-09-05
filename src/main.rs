@@ -425,6 +425,16 @@ impl Workspace {
     }
 
     fn write_layout(&self, cx: &mut Context<Self>, flush: bool) {
+        let (tab_count, used) = self
+            .sessions
+            .first()
+            .map(|group| (group.tabs.len(), group.tabs.first().is_some_and(|tab| tab.read(cx).used)))
+            .unwrap_or((0, false));
+        if is_fresh_workspace(self.sessions.len(), tab_count, used) {
+            config::save_workspace_layout(config::WorkspaceLayout::default());
+            config::clear_tab_snapshots();
+            return;
+        }
         for group in &self.sessions {
             for tab in &group.tabs {
                 tab.update(cx, |session, _| session.refresh_cwd());
@@ -452,6 +462,10 @@ impl Workspace {
         }
         config::prune_tab_snapshots(&layout);
     }
+}
+
+fn is_fresh_workspace(session_count: usize, tab_count: usize, tab_used: bool) -> bool {
+    session_count == 1 && tab_count == 1 && !tab_used
 }
 
 fn tab_destination(from: usize, insert_at: usize, len: usize) -> Option<usize> {
@@ -1252,7 +1266,7 @@ fn workspace_window_options(cx: &App) -> WindowOptions {
 
 #[cfg(test)]
 mod tests {
-    use super::{active_after_reorder, tab_destination};
+    use super::{active_after_reorder, is_fresh_workspace, tab_destination};
 
     #[test]
     fn tab_destination_skips_same_slot() {
@@ -1279,5 +1293,14 @@ mod tests {
         assert_eq!(active_after_reorder(1, 0, 2), 0);
         assert_eq!(active_after_reorder(1, 3, 0), 2);
         assert_eq!(active_after_reorder(1, 0, 3), 0);
+    }
+
+    #[test]
+    fn unused_single_session_is_fresh() {
+        assert!(is_fresh_workspace(1, 1, false));
+        assert!(!is_fresh_workspace(1, 1, true));
+        assert!(!is_fresh_workspace(1, 2, false));
+        assert!(!is_fresh_workspace(2, 1, false));
+        assert!(!is_fresh_workspace(0, 0, false));
     }
 }

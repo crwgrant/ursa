@@ -71,7 +71,7 @@ Ghostterm reads a TOML file it owns (not libghostty). The file is created the fi
 
 If `XDG_CONFIG_HOME` is set, that directory is used instead of `~/.config`. An existing folder at the previous locations (`~/Library/Application Support/Ghostterm` on macOS, `%APPDATA%\Ghostterm` on Windows) is still used until you move it.
 
-Window position, size, which monitor it was on, the sidebar split width, and the session/tab layout are stored separately in `window.toml` in the same folder, so moving or resizing the app does not rewrite `config.toml`. Extra windows opened with ⌘N are offset from that saved frame and start with one session. If that monitor is unplugged, the window is centered on the current screen. Drag the border between the sessions list and the terminal to resize; double-click it or use **Reset to Defaults** in Settings to restore the 220px width. Reopening the app restores the last sessions and tabs, each tab’s working directory, and the text that was on screen. A new shell starts in that directory (running commands are not resumed). Screen snapshots live in `state/` next to `window.toml`.
+Window position, size, which monitor it was on, the sidebar split width, and the session/tab layout are stored separately in `window.toml` in the same folder, so moving or resizing the app does not rewrite `config.toml`. Extra windows opened with ⌘N are offset from that saved frame and start with one session. If that monitor is unplugged, the window is centered on the current screen. Drag the border between the sessions list and the terminal to resize; double-click it or use **Reset to Defaults** in Settings to restore the 220px width. Reopening the app restores the last sessions and tabs, each tab’s working directory, and the text that was on screen. A new shell starts in that directory (running commands are not resumed). Screen snapshots live in `state/` next to `window.toml`. Quitting with only an unused session (or after closing the others and leaving a fresh tab) starts clean on the next launch.
 
 ```toml
 [font]
@@ -172,6 +172,7 @@ Config parse/round-trip tests live in `src/config.rs` (`cargo test`). A broader 
 - Nested `exit` (subshell) does not close the tab
 - Adding and closing sessions and tabs updates the active index
 - Reopening the app restores tab counts, each tab’s working directory, and on-screen history
+- Quitting with only an unused session does not restore that tab
 - ⌘N opens another window; Dock click with no windows opens one too
 
 ### Terminal surface

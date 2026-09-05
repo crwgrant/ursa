@@ -1037,14 +1037,22 @@ pub fn tab_snapshot_path(session: usize, tab: usize) -> PathBuf {
     state_dir().join(format!("s{session}-t{tab}.snp"))
 }
 
+pub fn clear_tab_snapshots() {
+    prune_snapshot_files(&std::collections::HashSet::new());
+}
+
 pub fn prune_tab_snapshots(layout: &WorkspaceLayout) {
-    let dir = state_dir();
     let keep = layout
         .sessions
         .iter()
         .enumerate()
         .flat_map(|(session, spec)| (0..spec.tabs).map(move |tab| format!("s{session}-t{tab}.snp")))
         .collect::<std::collections::HashSet<_>>();
+    prune_snapshot_files(&keep);
+}
+
+fn prune_snapshot_files(keep: &std::collections::HashSet<String>) {
+    let dir = state_dir();
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return;
     };

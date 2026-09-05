@@ -89,9 +89,22 @@ pub struct TabRestore {
     pub snapshot: Option<Vec<u8>>,
 }
 
+impl TabRestore {
+    pub fn marks_used(&self) -> bool {
+        if self.snapshot.as_ref().is_some_and(|bytes| !bytes.is_empty()) {
+            return true;
+        }
+        let Some(cwd) = crate::cwd::usable_cwd(self.cwd.as_deref()) else {
+            return false;
+        };
+        pty::home_dir().as_deref() != Some(cwd.as_path())
+    }
+}
+
 pub struct Session {
     pub title: String,
     pub cwd: Option<PathBuf>,
+    pub used: bool,
     pub exited: bool,
     pid: Option<u32>,
     focus: FocusHandle,
@@ -122,6 +135,7 @@ impl Session {
         let cell = frame::measure_cell(window, cx);
         let cols = 80;
         let rows = 24;
+        let used = restore.marks_used();
         let cwd = crate::cwd::usable_cwd(restore.cwd.as_deref());
         let pty = pty::spawn_shell(cols, rows, f32::from(cell.x) as u32, f32::from(cell.y) as u32, pty_tx, cwd.as_deref())
             .expect("failed to spawn shell");
@@ -194,6 +208,7 @@ impl Session {
         Self {
             title: format!("Tab {}", index + 1),
             cwd,
+            used,
             exited: false,
             pid,
             focus,
@@ -251,7 +266,7 @@ impl Session {
         }
     }
 
-    pub fn paste_clipboard(&self, cx: &mut Context<Self>) {
+    pub fn paste_clipboard(&mut self, cx: &mut Context<Self>) {
         if self.exited {
             return;
         }
@@ -263,13 +278,15 @@ impl Session {
             crate::notify::show(cx, "Clipboard is empty");
             return;
         }
+        self.used = true;
         let _ = self.commands.send(Command::Paste(text));
     }
 
-    pub fn clear_screen(&self) {
+    pub fn clear_screen(&mut self) {
         if self.exited {
             return;
         }
+        self.used = true;
         let _ = self.commands.send(Command::ClearScreen);
     }
 
@@ -316,6 +333,7 @@ impl Session {
             return;
         }
         if let Some(encoded) = input::encode_keystroke(&event.keystroke) {
+            self.used = true;
             let _ = self.commands.send(Command::ClearSelection);
             let _ = self.commands.send(Command::Key(encoded));
             cx.stop_propagation();
