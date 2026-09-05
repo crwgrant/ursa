@@ -2,6 +2,8 @@
 
 A native terminal with a reliable bearing, built in Rust with [GPUI](https://github.com/zed-industries/zed) and [libghostty-vt](https://github.com/uzaaft/libghostty-rs). Each window can show a left sidebar of sessions; each session has horizontal tabs, and each tab can split into panes that each talk to your login shell over a PTY. **Settings → Session sidebar** can hide the list so the window is only horizontal tabs.
 
+![Ursa](docs/screenshot.png)
+
 ## Features
 
 - Sessions in a left sidebar: add with **⌘⇧T** or the **+** button, close with **⌘⇧W** or **×**, switch with **⌃1–⌃9**, drag to reorder; drag the right edge to resize, double-click to reset
