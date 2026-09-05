@@ -987,12 +987,7 @@ fn settings_shortcut() -> &'static str {
 }
 
 fn view_menu() -> Menu {
-    let mut items = vec![
-        MenuItem::action("Clear Screen", ClearScreen),
-        MenuItem::separator(),
-        MenuItem::action("Close Session", CloseSession),
-        MenuItem::separator(),
-    ];
+    let mut items = vec![MenuItem::action("Close Session", CloseSession), MenuItem::separator()];
     for number in 1..=9 {
         items.push(MenuItem::action(format!("Tab {number}"), ActivateTab { index: number - 1 }));
     }
@@ -1000,6 +995,9 @@ fn view_menu() -> Menu {
     for number in 1..=9 {
         items.push(MenuItem::action(format!("Session {number}"), ActivateSession { index: number - 1 }));
     }
+    // Keep a trailing item so macOS can group "Enter Full Screen" (and its icon gutter) separately.
+    items.push(MenuItem::separator());
+    items.push(MenuItem::action("Clear Screen", ClearScreen));
     Menu {
         name: "View".into(),
         items,
