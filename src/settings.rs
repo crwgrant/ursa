@@ -102,6 +102,10 @@ impl SettingsPage {
             cx.notify();
         }
     }
+
+    fn close_window(&mut self, window: &mut Window, _cx: &mut Context<Self>) {
+        window.remove_window();
+    }
 }
 
 pub fn open(cx: &mut App) {
@@ -128,7 +132,7 @@ pub fn open(cx: &mut App) {
 }
 
 fn window_options(cx: &App) -> WindowOptions {
-    let bounds = Bounds::centered(None, size(px(520.0), px(500.0)), cx);
+    let bounds = Bounds::centered(None, size(px(520.0), px(640.0)), cx);
     WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: Some(TitlebarOptions {
@@ -141,7 +145,7 @@ fn window_options(cx: &App) -> WindowOptions {
         kind: gpui::WindowKind::Normal,
         is_movable: true,
         display_id: None,
-        window_min_size: Some(size(px(420.0), px(400.0))),
+        window_min_size: Some(size(px(420.0), px(600.0))),
         window_background: gpui::WindowBackgroundAppearance::Opaque,
         app_id: Some(crate::APP_ID.into()),
         is_resizable: true,
@@ -235,6 +239,7 @@ impl Render for SettingsPage {
             .text_color(rgb(colors.text))
             .font_family(theme::UI_FONT_FAMILY)
             .on_key_down(cx.listener(|this, event, _window, cx| this.handle_key(event, cx)))
+            .on_action(cx.listener(|this, _: &crate::CloseTab, window, cx| this.close_window(window, cx)))
             .child(
                 div()
                     .flex_1()
@@ -592,6 +597,7 @@ impl Render for ScrollbackField {
             })
             .cursor(CursorStyle::IBeam)
             .on_key_down(cx.listener(|this, event, _window, cx| this.handle_key(event, cx)))
+            .on_action(|_: &crate::CloseTab, window, _cx| window.remove_window())
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _event, window, cx| {

@@ -7,7 +7,7 @@ use std::{
 use gpui::{
     App, Bounds, ClipboardItem, Context, Corner, CursorStyle, EventEmitter, FocusHandle, InteractiveElement, IntoElement,
     KeyDownEvent, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
-    Render, ScrollWheelEvent, Styled, Window, anchored, canvas, div, px, rgb,
+    Render, ScrollWheelEvent, Styled, Window, anchored, canvas, div, prelude::FluentBuilder, px, rgb,
 };
 use libghostty_vt::{
     Terminal,
@@ -179,6 +179,10 @@ impl Session {
 
     pub fn focus(&self, window: &mut Window) {
         self.focus.focus(window);
+    }
+
+    pub fn has_selection(&self) -> bool {
+        self.frame.has_selection
     }
 
     pub fn copy_selection(&self, cx: &mut Context<Self>) {
@@ -454,8 +458,12 @@ impl Render for Session {
                 CursorStyle::IBeam
             })
             .on_key_down(cx.listener(|this, event, _window, cx| this.handle_key(event, cx)))
-            .on_action(cx.listener(|this, _: &crate::Copy, _window, cx| this.copy_selection(cx)))
-            .on_action(cx.listener(|this, _: &crate::Paste, _window, cx| this.paste_clipboard(cx)))
+            .when(self.frame.has_selection, |el| {
+                el.on_action(cx.listener(|this, _: &crate::Copy, _window, cx| this.copy_selection(cx)))
+            })
+            .when(clipboard_has_text(cx), |el| {
+                el.on_action(cx.listener(|this, _: &crate::Paste, _window, cx| this.paste_clipboard(cx)))
+            })
             .on_action(cx.listener(|this, _: &crate::ClearScreen, _window, _cx| this.clear_screen()))
             .on_modifiers_changed(cx.listener(|this, event, window, cx| this.handle_modifiers(event, window, cx)))
             .on_scroll_wheel(cx.listener(|this, event, _window, cx| this.handle_scroll(event, cx)))
@@ -568,6 +576,12 @@ fn link_menu_item(
         )
 }
 
+pub fn clipboard_has_text(cx: &App) -> bool {
+    cx.read_from_clipboard()
+        .and_then(|item| item.text())
+        .is_some_and(|text| !text.is_empty())
+}
+
 fn reserved_shortcut(modifiers: &gpui::Modifiers, key: &str) -> bool {
     if modifiers.platform && matches!(key, "q" | "t" | "w" | "n" | "c" | "v" | "k" | ",") {
         return true;
@@ -586,6 +600,7 @@ fn empty_frame(colors: theme::Colors) -> Frame {
         _foreground: frame::Rgb { r: fr, g: fg, b: fb },
         rows: Vec::new(),
         cursor: None,
+        has_selection: false,
     }
 }
 
