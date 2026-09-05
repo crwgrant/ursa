@@ -10,7 +10,7 @@ mod settings;
 mod theme;
 
 use gpui::{
-    AnyView, App, Application, Bounds, Context, CursorStyle, DragMoveEvent, KeyBinding, Menu, MenuItem, MouseButton,
+    AnyElement, AnyView, App, Application, Bounds, Context, CursorStyle, DragMoveEvent, KeyBinding, Menu, MenuItem, MouseButton,
     MouseDownEvent, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, point, prelude::*, px, rgb,
     size,
 };
@@ -28,6 +28,40 @@ struct Workspace {
     active: usize,
     sidebar_width: f32,
     sidebar_split_locked: bool,
+    dragging_tab: Option<usize>,
+    tab_insert_at: Option<usize>,
+}
+
+#[derive(Clone)]
+struct TabDrag {
+    index: usize,
+    title: SharedString,
+}
+
+struct TabDragPreview {
+    title: SharedString,
+    background: u32,
+    text: u32,
+    accent: u32,
+}
+
+impl Render for TabDragPreview {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let background = self.background;
+        let text = self.text;
+        let accent = self.accent;
+        div()
+            .px_3()
+            .py_2()
+            .rounded_md()
+            .bg(rgb(background))
+            .shadow_md()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(div().w(px(6.0)).h(px(6.0)).rounded_full().bg(rgb(accent)))
+            .child(div().text_sm().text_color(rgb(text)).child(self.title.clone()))
+    }
 }
 
 #[derive(Clone)]
@@ -49,6 +83,8 @@ impl Workspace {
             active: 0,
             sidebar_width: config::restored_sidebar_width(),
             sidebar_split_locked: false,
+            dragging_tab: None,
+            tab_insert_at: None,
         };
         workspace.subscribe_session(0, window, cx);
         cx.observe_global::<notify::Notifications>(|_, cx| cx.notify()).detach();
@@ -183,10 +219,64 @@ impl Workspace {
         self.sidebar_split_locked = false;
         self.set_sidebar_width(self.sidebar_width, window, true, cx);
     }
+
+    fn set_tab_insert_at(&mut self, from: usize, insert_at: usize, cx: &mut Context<Self>) {
+        self.dragging_tab = Some(from);
+        if self.tab_insert_at != Some(insert_at) {
+            self.tab_insert_at = Some(insert_at);
+            cx.notify();
+        }
+    }
+
+    fn drop_tab(&mut self, from: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(insert_at) = self.tab_insert_at {
+            self.reorder_tab(from, insert_at, window, cx);
+        }
+        self.dragging_tab = None;
+        self.tab_insert_at = None;
+        cx.notify();
+    }
+
+    fn reorder_tab(&mut self, from: usize, insert_at: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(dest) = tab_destination(from, insert_at, self.tabs.len()) else {
+            return;
+        };
+        let tab = self.tabs.remove(from);
+        self.tabs.insert(dest, tab);
+        self.active = active_after_reorder(self.active, from, dest);
+        self.focus_active(window, cx);
+        cx.notify();
+    }
+}
+
+fn tab_destination(from: usize, insert_at: usize, len: usize) -> Option<usize> {
+    if from >= len || insert_at > len {
+        return None;
+    }
+    if insert_at == from || insert_at == from + 1 {
+        return None;
+    }
+    Some(if insert_at > from { insert_at - 1 } else { insert_at })
+}
+
+fn active_after_reorder(active: usize, from: usize, dest: usize) -> usize {
+    if active == from {
+        dest
+    } else if from < active && dest >= active {
+        active - 1
+    } else if from > active && dest <= active {
+        active + 1
+    } else {
+        active
+    }
 }
 
 impl Render for Workspace {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !cx.has_active_drag() {
+            self.dragging_tab = None;
+            self.tab_insert_at = None;
+        }
         let active = self.active;
         let tabs: Vec<(usize, SharedString, bool)> = self
             .tabs
@@ -234,11 +324,23 @@ impl Workspace {
             .flex_col()
             .child(
                 div()
+                    .id("sessions-header")
                     .flex()
                     .items_center()
                     .justify_between()
                     .px_3()
                     .py_3()
+                    .when(tabs.len() > 1, |header| {
+                        header
+                            .on_drag_move(cx.listener(|this, event: &DragMoveEvent<TabDrag>, _, cx| {
+                                if tab_drag_is_over(event) {
+                                    this.set_tab_insert_at(event.drag(cx).index, 0, cx);
+                                }
+                            }))
+                            .on_drop(cx.listener(|this, drag: &TabDrag, window, cx| {
+                                this.drop_tab(drag.index, window, cx);
+                            }))
+                    })
                     .child(
                         div()
                             .text_xs()
@@ -248,21 +350,45 @@ impl Workspace {
                     )
                     .child(new_tab_button(cx)),
             )
-            .child(
-                div()
-                    .id("tab-list")
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .px_2()
-                    .gap_1()
-                    .overflow_y_scroll()
-                    .children(
-                        tabs.iter()
-                            .map(|(index, title, selected)| tab_row(*index, title.clone(), *selected, cx)),
-                    ),
-            )
+            .child(self.render_tab_list(tabs, cx))
             .child(settings_button(cx))
+    }
+
+    fn render_tab_list(&self, tabs: &[(usize, SharedString, bool)], cx: &mut Context<Self>) -> impl IntoElement {
+        let can_reorder = tabs.len() > 1;
+        let insert_at = self.tab_insert_at;
+        let dragging_tab = self.dragging_tab;
+        let last = tabs.len().saturating_sub(1);
+        let mut items: Vec<AnyElement> = Vec::new();
+        items.push(tab_list_edge("tab-list-start", 0, can_reorder, cx).into_any_element());
+        for (index, title, selected) in tabs {
+            let insert = if insert_at == Some(*index) {
+                Some(TabInsert::Before)
+            } else if insert_at == Some(*index + 1) && *index == last {
+                Some(TabInsert::After)
+            } else {
+                None
+            };
+            items.push(
+                tab_row(*index, title.clone(), *selected, dragging_tab == Some(*index), insert, can_reorder, cx)
+                    .into_any_element(),
+            );
+        }
+        items.push(tab_list_edge("tab-list-end", tabs.len(), can_reorder, cx).into_any_element());
+        div()
+            .id("tab-list")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .px_2()
+            .gap_1()
+            .overflow_y_scroll()
+            .children(items)
+            .when(can_reorder, |list| {
+                list.on_drop(cx.listener(|this, drag: &TabDrag, window, cx| {
+                    this.drop_tab(drag.index, window, cx);
+                }))
+            })
     }
 
     fn render_terminal(&self) -> impl IntoElement {
@@ -404,27 +530,112 @@ fn close_tab_button(index: usize, cx: &mut Context<Workspace>) -> impl IntoEleme
         )
 }
 
-fn tab_row(index: usize, title: SharedString, selected: bool, cx: &mut Context<Workspace>) -> impl IntoElement {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TabInsert {
+    Before,
+    After,
+}
+
+fn tab_drag_is_over(event: &DragMoveEvent<TabDrag>) -> bool {
+    event.bounds.contains(&event.event.position)
+}
+
+fn tab_insert_line(cx: &App) -> impl IntoElement {
+    let colors = theme::colors(cx);
+    div().w_full().h(px(2.0)).rounded_full().bg(rgb(colors.accent))
+}
+
+fn tab_list_edge(id: &'static str, insert_at: usize, can_reorder: bool, cx: &mut Context<Workspace>) -> impl IntoElement {
+    div()
+        .id(id)
+        .when(id == "tab-list-end", |edge| edge.flex_1().min_h(px(12.0)))
+        .when(id == "tab-list-start", |edge| edge.h(px(8.0)))
+        .when(can_reorder, |edge| {
+            edge.on_drag_move(cx.listener(move |this, event: &DragMoveEvent<TabDrag>, _, cx| {
+                if tab_drag_is_over(event) {
+                    this.set_tab_insert_at(event.drag(cx).index, insert_at, cx);
+                }
+            }))
+            .on_drop(cx.listener(|this, drag: &TabDrag, window, cx| {
+                this.drop_tab(drag.index, window, cx);
+            }))
+        })
+}
+
+fn tab_row(
+    index: usize,
+    title: SharedString,
+    selected: bool,
+    dragging: bool,
+    insert: Option<TabInsert>,
+    can_reorder: bool,
+    cx: &mut Context<Workspace>,
+) -> impl IntoElement {
     let colors = theme::colors(cx);
     let background = if selected {
         rgb(colors.tab_active)
     } else {
         rgb(colors.sidebar)
     };
+    let drag = TabDrag {
+        index,
+        title: title.clone(),
+    };
+    let on_select = cx.listener(move |this, _event, window, cx| this.select_tab(index, window, cx));
+    let on_drag_move = cx.listener(move |this, event: &DragMoveEvent<TabDrag>, _, cx| {
+        if !tab_drag_is_over(event) {
+            return;
+        }
+        let y = event.event.position.y - event.bounds.origin.y;
+        let insert_at = if y < event.bounds.size.height * 0.5 {
+            index
+        } else {
+            index + 1
+        };
+        this.set_tab_insert_at(event.drag(cx).index, insert_at, cx);
+    });
+    let on_drop = cx.listener(move |this, drag: &TabDrag, window, cx| {
+        this.drop_tab(drag.index, window, cx);
+    });
+    let close = close_tab_button(index, cx);
 
     div()
         .id(("tab", index))
+        .relative()
         .w_full()
         .rounded_md()
         .px_3()
         .py_2()
         .bg(background)
-        .cursor_pointer()
+        .when(dragging, |row| row.opacity(0.4))
+        .when(can_reorder, |row| row.cursor_move())
+        .when(!can_reorder, |row| row.cursor_pointer())
         .hover(move |style| if selected { style } else { style.bg(rgb(colors.tab_hover)) })
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, _event, window, cx| this.select_tab(index, window, cx)),
-        )
+        .on_mouse_down(MouseButton::Left, on_select)
+        .when(can_reorder, |row| {
+            row.on_drag(drag, |drag, _, _, cx| {
+                let colors = theme::colors(cx);
+                cx.new(|_| TabDragPreview {
+                    title: drag.title.clone(),
+                    background: colors.tab_active,
+                    text: colors.text,
+                    accent: colors.accent,
+                })
+            })
+            .on_drag_move(on_drag_move)
+            .on_drop(on_drop)
+        })
+        .when_some(insert, |row, edge| {
+            row.child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .when(edge == TabInsert::Before, |line| line.top_0())
+                    .when(edge == TabInsert::After, |line| line.bottom_0())
+                    .child(tab_insert_line(cx)),
+            )
+        })
         .child(
             div()
                 .flex()
@@ -445,7 +656,7 @@ fn tab_row(index: usize, title: SharedString, selected: bool, cx: &mut Context<W
                         .text_color(if selected { rgb(colors.text) } else { rgb(colors.text_dim) })
                         .child(title),
                 )
-                .child(close_tab_button(index, cx)),
+                .child(close),
         )
 }
 
@@ -636,5 +847,37 @@ fn workspace_window_options(cx: &App) -> WindowOptions {
         is_minimizable: true,
         window_decorations: None,
         tabbing_identifier: Some("Ghostterm".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{active_after_reorder, tab_destination};
+
+    #[test]
+    fn tab_destination_skips_same_slot() {
+        assert_eq!(tab_destination(1, 1, 4), None);
+        assert_eq!(tab_destination(1, 2, 4), None);
+        assert_eq!(tab_destination(0, 0, 1), None);
+        assert_eq!(tab_destination(3, 5, 4), None);
+    }
+
+    #[test]
+    fn tab_destination_moves_around_neighbors() {
+        assert_eq!(tab_destination(1, 0, 4), Some(0));
+        assert_eq!(tab_destination(1, 3, 4), Some(2));
+        assert_eq!(tab_destination(1, 4, 4), Some(3));
+        assert_eq!(tab_destination(0, 4, 4), Some(3));
+        assert_eq!(tab_destination(3, 0, 4), Some(0));
+    }
+
+    #[test]
+    fn active_index_follows_moved_tab() {
+        assert_eq!(active_after_reorder(1, 1, 3), 3);
+        assert_eq!(active_after_reorder(2, 0, 2), 1);
+        assert_eq!(active_after_reorder(0, 2, 0), 1);
+        assert_eq!(active_after_reorder(1, 0, 2), 0);
+        assert_eq!(active_after_reorder(1, 3, 0), 2);
+        assert_eq!(active_after_reorder(1, 0, 3), 0);
     }
 }

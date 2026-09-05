@@ -4,7 +4,7 @@ A terminal emulator built in Rust with [GPUI](https://github.com/zed-industries/
 
 ## Features
 
-- Tabbed sessions in a left sidebar: add with **⌘T** or the **+** button, close with **⌘W** or **×**; drag the right edge to resize, double-click to reset
+- Tabbed sessions in a left sidebar: add with **⌘T** or the **+** button, close with **⌘W** or **×**; drag tabs to reorder; drag the right edge to resize, double-click to reset
 - Mouse selection: click-drag, double-click a word, triple-click a line, Option-drag for a block
 - Line and word movement: **⌘← / ⌘→** jump to the start or end of the line; **⌥← / ⌥→** move by word
 - Delete by word and line: **⌥⌫** / **⌥⌦** kill the previous or next word; **⌘⌫** / **⌘⌦** kill to the start or end of the line
@@ -111,7 +111,7 @@ The Settings window writes `config.toml` when you change a value. Editing the co
 - [ ] Horizontal tabs for each session
 - [x] Remember window position and size across launches
 - [x] Draggable split to resize the tab sidebar vs the terminal
-- [ ] Drag to reorder tabs in the sidebar
+- [x] Drag to reorder tabs in the sidebar
 - [ ] Rename tabs
 - [ ] Option to keep a tab open after the shell exits
 - [ ] Option to turn off sessions and have simple terminal with horizontal tabs
