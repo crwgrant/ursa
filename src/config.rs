@@ -201,7 +201,7 @@ impl WindowFrame {
             .unwrap_or_default();
         format!(
             "\
-# Last Skiff window position and size. Updated when you move or resize the window.
+# Last Ursa window position and size. Updated when you move or resize the window.
 # `display` is the monitor UUID so the window reopens on the same screen.
 # `state` is windowed, maximized, or fullscreen. x/y/width/height are the restored windowed frame.
 # `sidebar_width` is the sessions list width in pixels.
@@ -595,9 +595,9 @@ impl Config {
         let size = format_number(self.font_size);
         format!(
             "\
-# Skiff configuration.
-# This file is owned by Skiff (not libghostty). Edit it here or use Skiff → Settings.
-# Unknown keys are ignored so older Skiff versions stay compatible.
+# Ursa configuration.
+# This file is owned by Ursa (not libghostty). Edit it here or use Ursa → Settings.
+# Unknown keys are ignored so older Ursa versions stay compatible.
 
 [font]
 # Terminal typeface. Leave empty or omit to prefer NotoMono Nerd Font, then the OS mono font.
@@ -1375,31 +1375,32 @@ fn preferred_config_dir(home: Option<&Path>, xdg_config_home: Option<&Path>) -> 
     xdg_config_home
         .map(Path::to_path_buf)
         .or_else(|| home.map(|home| home.join(".config")))
-        .map(|root| root.join("skiff"))
+        .map(|root| root.join("ursa"))
 }
 
 fn legacy_config_dir() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
     if let Some(home) = pty::home_dir() {
         let xdg = std::env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
-            .unwrap_or_else(|| home.join(".config"))
-            .join("ghostterm");
-        if xdg.exists() {
-            return Some(xdg);
+            .unwrap_or_else(|| home.join(".config"));
+        candidates.push(xdg.join("skiff"));
+        candidates.push(xdg.join("ghostterm"));
+        #[cfg(target_os = "macos")]
+        {
+            candidates.push(home.join("Library/Application Support/Skiff"));
+            candidates.push(home.join("Library/Application Support/Ghostterm"));
         }
-    }
-    #[cfg(target_os = "macos")]
-    {
-        return pty::home_dir().map(|home| home.join("Library/Application Support/Ghostterm"));
     }
     #[cfg(target_os = "windows")]
     {
-        return std::env::var_os("APPDATA").map(|app_data| PathBuf::from(app_data).join("Ghostterm"));
+        if let Some(app_data) = std::env::var_os("APPDATA") {
+            let app_data = PathBuf::from(app_data);
+            candidates.push(app_data.join("Skiff"));
+            candidates.push(app_data.join("Ghostterm"));
+        }
     }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        None
-    }
+    candidates.into_iter().find(|path| path.exists())
 }
 
 struct Loaded {
@@ -1779,11 +1780,11 @@ mod tests {
         let home = PathBuf::from("/Users/dev");
         assert_eq!(
             preferred_config_dir(Some(&home), None).as_deref(),
-            Some(Path::new("/Users/dev/.config/skiff"))
+            Some(Path::new("/Users/dev/.config/ursa"))
         );
         assert_eq!(
             preferred_config_dir(Some(&home), Some(Path::new("/custom/xdg"))).as_deref(),
-            Some(Path::new("/custom/xdg/skiff"))
+            Some(Path::new("/custom/xdg/ursa"))
         );
         assert_eq!(preferred_config_dir(None, None), None);
     }
