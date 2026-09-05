@@ -16,10 +16,15 @@ pub const SCROLLBACK_MIN: u32 = 100;
 pub const SCROLLBACK_MAX: u32 = 100_000;
 pub const WINDOW_MIN_WIDTH: f32 = 640.0;
 pub const WINDOW_MIN_HEIGHT: f32 = 400.0;
+pub const WORKSPACE_MAX_SESSIONS: usize = 16;
+pub const WORKSPACE_MAX_TABS: usize = 16;
 const WINDOW_STATE_FILE: &str = "window.toml";
+const TAB_SNAPSHOT_DIR: &str = "state";
+const TAB_SNAPSHOT_MAX_BYTES: usize = 8 * 1024 * 1024;
 
 static LAST_WINDOW_FRAME: Mutex<Option<WindowFrame>> = Mutex::new(None);
 static LAST_SIDEBAR_WIDTH: Mutex<Option<f32>> = Mutex::new(None);
+static LAST_WORKSPACE_LAYOUT: Mutex<Option<WorkspaceLayout>> = Mutex::new(None);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WindowState {
@@ -56,6 +61,10 @@ pub struct WindowFrame {
     pub display: Option<String>,
     pub state: WindowState,
     pub sidebar_width: Option<f32>,
+    pub session_tabs: Vec<usize>,
+    pub active_session: usize,
+    pub active_tabs: Vec<usize>,
+    pub tab_cwds: Vec<String>,
 }
 
 impl WindowFrame {
@@ -91,6 +100,22 @@ impl WindowFrame {
             display,
             state,
             sidebar_width: last.and_then(|frame| frame.sidebar_width).or_else(pending_sidebar_width),
+            session_tabs: last
+                .map(|frame| frame.session_tabs.clone())
+                .or_else(|| pending_workspace_layout().map(|layout| layout.session_tabs()))
+                .unwrap_or_default(),
+            active_session: last
+                .map(|frame| frame.active_session)
+                .or_else(|| pending_workspace_layout().map(|layout| layout.active_session))
+                .unwrap_or(0),
+            active_tabs: last
+                .map(|frame| frame.active_tabs.clone())
+                .or_else(|| pending_workspace_layout().map(|layout| layout.active_tabs()))
+                .unwrap_or_default(),
+            tab_cwds: last
+                .map(|frame| frame.tab_cwds.clone())
+                .or_else(|| pending_workspace_layout().map(|layout| layout.tab_cwd_strings()))
+                .unwrap_or_default(),
         }
         .sanitized()
     }
@@ -130,7 +155,22 @@ impl WindowFrame {
             display,
             state: self.state,
             sidebar_width: self.sidebar_width.and_then(sanitized_sidebar_width),
+            session_tabs: self.session_tabs,
+            active_session: self.active_session,
+            active_tabs: self.active_tabs,
+            tab_cwds: self.tab_cwds,
         })
+        .map(|frame| frame.with_sanitized_layout())
+    }
+
+    fn with_sanitized_layout(mut self) -> Self {
+        let layout =
+            WorkspaceLayout::from_parts(self.session_tabs, self.active_session, self.active_tabs, parse_tab_cwds(self.tab_cwds));
+        self.session_tabs = layout.session_tabs();
+        self.active_session = layout.active_session;
+        self.active_tabs = layout.active_tabs();
+        self.tab_cwds = layout.tab_cwd_strings();
+        self
     }
 
     fn render(&self) -> String {
@@ -145,12 +185,14 @@ impl WindowFrame {
 # `display` is the monitor UUID so the window reopens on the same screen.
 # `state` is windowed, maximized, or fullscreen. x/y/width/height are the restored windowed frame.
 # `sidebar_width` is the sessions list width in pixels.
+# `session_tabs` is the tab count per sidebar session; `active_tabs` is the selected tab in each.
+# `tab_cwds` is the last working directory of each tab, session-major then tab order.
 x = {x}
 y = {y}
 width = {width}
 height = {height}
 state = {state}
-{sidebar}{display}",
+{sidebar}{display}{layout}",
             x = format_number(self.x),
             y = format_number(self.y),
             width = format_number(self.width),
@@ -160,7 +202,109 @@ state = {state}
                 .sidebar_width
                 .map(|width| format!("sidebar_width = {}\n", format_number(width)))
                 .unwrap_or_default(),
+            layout = self.render_layout(),
         )
+    }
+
+    fn render_layout(&self) -> String {
+        if self.session_tabs.is_empty() {
+            return String::new();
+        }
+        format!(
+            "session_tabs = {tabs}\nactive_session = {active}\nactive_tabs = {actives}\ntab_cwds = {cwds}\n",
+            tabs = toml_usize_array(&self.session_tabs),
+            active = self.active_session,
+            actives = toml_usize_array(&self.active_tabs),
+            cwds = toml_string_array(&self.tab_cwds),
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkspaceLayout {
+    pub sessions: Vec<SessionLayout>,
+    pub active_session: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionLayout {
+    pub tabs: usize,
+    pub active: usize,
+    pub cwds: Vec<Option<PathBuf>>,
+}
+
+impl Default for WorkspaceLayout {
+    fn default() -> Self {
+        Self {
+            sessions: vec![SessionLayout {
+                tabs: 1,
+                active: 0,
+                cwds: vec![None],
+            }],
+            active_session: 0,
+        }
+    }
+}
+
+impl WorkspaceLayout {
+    pub fn from_workspace(sessions: &[(usize, usize, Vec<Option<PathBuf>>)], active_session: usize) -> Self {
+        Self::from_parts(
+            sessions.iter().map(|(tabs, _, _)| *tabs).collect(),
+            active_session,
+            sessions.iter().map(|(_, active, _)| *active).collect(),
+            sessions.iter().flat_map(|(_, _, cwds)| cwds.clone()).collect(),
+        )
+    }
+
+    fn from_parts(
+        session_tabs: Vec<usize>,
+        active_session: usize,
+        active_tabs: Vec<usize>,
+        tab_cwds: Vec<Option<PathBuf>>,
+    ) -> Self {
+        let mut cwd_iter = tab_cwds.into_iter();
+        let mut sessions = Vec::new();
+        for (index, tabs) in session_tabs.into_iter().take(WORKSPACE_MAX_SESSIONS).enumerate() {
+            let tabs = tabs.clamp(1, WORKSPACE_MAX_TABS);
+            let active = active_tabs.get(index).copied().unwrap_or(0).min(tabs.saturating_sub(1));
+            let cwds = (0..tabs)
+                .map(|_| cwd_iter.next().flatten().filter(|path| !path.as_os_str().is_empty()))
+                .collect();
+            sessions.push(SessionLayout { tabs, active, cwds });
+        }
+        if sessions.is_empty() {
+            return Self::default();
+        }
+        let active_session = active_session.min(sessions.len().saturating_sub(1));
+        Self {
+            sessions,
+            active_session,
+        }
+    }
+
+    fn session_tabs(&self) -> Vec<usize> {
+        self.sessions.iter().map(|session| session.tabs).collect()
+    }
+
+    fn active_tabs(&self) -> Vec<usize> {
+        self.sessions.iter().map(|session| session.active).collect()
+    }
+
+    fn tab_cwd_strings(&self) -> Vec<String> {
+        self.sessions
+            .iter()
+            .flat_map(|session| {
+                session.cwds.iter().map(|cwd| {
+                    cwd.as_ref()
+                        .map(|path| path.to_string_lossy().into_owned())
+                        .unwrap_or_default()
+                })
+            })
+            .collect()
+    }
+
+    fn tab_cwd_paths(&self) -> Vec<Option<PathBuf>> {
+        self.sessions.iter().flat_map(|session| session.cwds.clone()).collect()
     }
 }
 
@@ -199,12 +343,48 @@ impl CursorShape {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OnExit {
+    #[default]
+    Close,
+    Keep,
+}
+
+impl OnExit {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Close => "close",
+            Self::Keep => "keep",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Close => "Close tab",
+            Self::Keep => "Keep tab open",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "close" | "close-tab" | "always" => Some(Self::Close),
+            "keep" | "keep-open" | "never" => Some(Self::Keep),
+            _ => None,
+        }
+    }
+
+    pub fn all() -> [Self; 2] {
+        [Self::Close, Self::Keep]
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Config {
     pub font_family: Option<String>,
     pub font_size: f32,
     pub scrollback_lines: u32,
     pub cursor_shape: CursorShape,
+    pub on_exit: OnExit,
     pub theme: String,
     pub themes_file: String,
 }
@@ -216,6 +396,7 @@ impl Default for Config {
             font_size: theme::FONT_SIZE,
             scrollback_lines: DEFAULT_SCROLLBACK,
             cursor_shape: CursorShape::Bar,
+            on_exit: OnExit::Close,
             theme: theme::DEFAULT_THEME.to_string(),
             themes_file: theme::DEFAULT_THEMES_FILE.to_string(),
         }
@@ -280,11 +461,14 @@ themes = {themes}
 scrollback_lines = {scrollback}
 # Cursor shape: block or bar.
 cursor = {cursor}
+# When the top-level shell exits: close the tab, or keep it open.
+on_exit = {on_exit}
 ",
             theme = toml_string(&self.theme),
             themes = toml_string(&self.themes_file),
             scrollback = self.scrollback_lines,
             cursor = toml_string(self.cursor_shape.as_str()),
+            on_exit = toml_string(self.on_exit.as_str()),
         )
     }
 
@@ -318,6 +502,7 @@ struct FontSection {
 struct TerminalSection {
     scrollback_lines: Option<u32>,
     cursor: Option<String>,
+    on_exit: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -383,6 +568,10 @@ pub fn scrollback_lines(cx: &App) -> u32 {
 
 pub fn cursor_shape(cx: &App) -> CursorShape {
     current(cx).cursor_shape
+}
+
+pub fn keep_tab_on_exit(cx: &App) -> bool {
+    current(cx).on_exit == OnExit::Keep
 }
 
 pub fn path(cx: &App) -> PathBuf {
@@ -461,6 +650,7 @@ pub fn parse(text: &str) -> Result<Config, String> {
             .as_deref()
             .and_then(CursorShape::parse)
             .unwrap_or_default(),
+        on_exit: file.terminal.on_exit.as_deref().and_then(OnExit::parse).unwrap_or_default(),
         theme: file
             .appearance
             .theme
@@ -589,6 +779,71 @@ pub fn restored_sidebar_width() -> f32 {
         .unwrap_or(theme::SIDEBAR_WIDTH)
 }
 
+pub fn restored_workspace_layout() -> WorkspaceLayout {
+    pending_workspace_layout()
+        .or_else(|| {
+            load_window_frame().map(|frame| {
+                WorkspaceLayout::from_parts(
+                    frame.session_tabs,
+                    frame.active_session,
+                    frame.active_tabs,
+                    parse_tab_cwds(frame.tab_cwds),
+                )
+            })
+        })
+        .unwrap_or_default()
+}
+
+pub fn save_workspace_layout(layout: WorkspaceLayout) {
+    let layout =
+        WorkspaceLayout::from_parts(layout.session_tabs(), layout.active_session, layout.active_tabs(), layout.tab_cwd_paths());
+    if let Ok(mut last) = LAST_WORKSPACE_LAYOUT.lock() {
+        if last.as_ref() == Some(&layout) {
+            write_workspace_layout_to_frame(&layout);
+            return;
+        }
+        *last = Some(layout.clone());
+    }
+    write_workspace_layout_to_frame(&layout);
+}
+
+fn write_workspace_layout_to_frame(layout: &WorkspaceLayout) {
+    let Some(mut frame) = LAST_WINDOW_FRAME
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone())
+        .or_else(load_window_frame)
+    else {
+        return;
+    };
+    let session_tabs = layout.session_tabs();
+    let active_tabs = layout.active_tabs();
+    let tab_cwds = layout.tab_cwd_strings();
+    if frame.session_tabs == session_tabs
+        && frame.active_session == layout.active_session
+        && frame.active_tabs == active_tabs
+        && frame.tab_cwds == tab_cwds
+    {
+        return;
+    }
+    frame.session_tabs = session_tabs;
+    frame.active_session = layout.active_session;
+    frame.active_tabs = active_tabs;
+    frame.tab_cwds = tab_cwds;
+    if let Ok(mut last) = LAST_WINDOW_FRAME.lock() {
+        *last = Some(frame.clone());
+    }
+    let path = window_state_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(path, frame.render());
+}
+
+fn pending_workspace_layout() -> Option<WorkspaceLayout> {
+    LAST_WORKSPACE_LAYOUT.lock().ok().and_then(|guard| guard.clone())
+}
+
 pub fn save_sidebar_width(width: f32) {
     let Some(width) = sanitized_sidebar_width(width) else {
         return;
@@ -674,6 +929,10 @@ fn parse_window_frame(text: &str) -> Option<WindowFrame> {
         display: file.display,
         state: WindowState::parse(file.state.as_deref()),
         sidebar_width: file.sidebar_width,
+        session_tabs: file.session_tabs.unwrap_or_default(),
+        active_session: file.active_session.unwrap_or(0),
+        active_tabs: file.active_tabs.unwrap_or_default(),
+        tab_cwds: file.tab_cwds.unwrap_or_default(),
     }
     .sanitized()
 }
@@ -736,6 +995,74 @@ struct WindowFile {
     display: Option<String>,
     state: Option<String>,
     sidebar_width: Option<f32>,
+    session_tabs: Option<Vec<usize>>,
+    active_session: Option<usize>,
+    active_tabs: Option<Vec<usize>>,
+    tab_cwds: Option<Vec<String>>,
+}
+
+fn parse_tab_cwds(values: impl IntoIterator<Item = impl AsRef<str>>) -> Vec<Option<PathBuf>> {
+    values
+        .into_iter()
+        .map(|value| {
+            let trimmed = value.as_ref().trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(PathBuf::from(trimmed))
+            }
+        })
+        .collect()
+}
+
+pub fn read_tab_snapshot(session: usize, tab: usize) -> Option<Vec<u8>> {
+    let bytes = std::fs::read(tab_snapshot_path(session, tab)).ok()?;
+    if bytes.is_empty() || bytes.len() > TAB_SNAPSHOT_MAX_BYTES {
+        return None;
+    }
+    Some(bytes)
+}
+
+pub fn write_tab_snapshot(path: &Path, bytes: &[u8]) {
+    if bytes.is_empty() || bytes.len() > TAB_SNAPSHOT_MAX_BYTES {
+        return;
+    }
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(path, bytes);
+}
+
+pub fn tab_snapshot_path(session: usize, tab: usize) -> PathBuf {
+    state_dir().join(format!("s{session}-t{tab}.snp"))
+}
+
+pub fn prune_tab_snapshots(layout: &WorkspaceLayout) {
+    let dir = state_dir();
+    let keep = layout
+        .sessions
+        .iter()
+        .enumerate()
+        .flat_map(|(session, spec)| (0..spec.tabs).map(move |tab| format!("s{session}-t{tab}.snp")))
+        .collect::<std::collections::HashSet<_>>();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if name.starts_with('s') && name.ends_with(".snp") && !keep.contains(name) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+fn state_dir() -> PathBuf {
+    config_dir()
+        .map(|dir| dir.join(TAB_SNAPSHOT_DIR))
+        .unwrap_or_else(|| PathBuf::from(TAB_SNAPSHOT_DIR))
 }
 
 fn config_dir() -> Option<PathBuf> {
@@ -931,6 +1258,14 @@ fn is_blank_or_comments(text: &str) -> bool {
     })
 }
 
+fn toml_usize_array(values: &[usize]) -> String {
+    format!("[{}]", values.iter().map(ToString::to_string).collect::<Vec<_>>().join(", "))
+}
+
+fn toml_string_array(values: &[String]) -> String {
+    format!("[{}]", values.iter().map(|value| toml_string(value)).collect::<Vec<_>>().join(", "))
+}
+
 fn toml_string(value: &str) -> String {
     let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
     format!("\"{escaped}\"")
@@ -982,6 +1317,7 @@ mod tests {
         assert_eq!(config.font_size, 16.0);
         assert_eq!(config.scrollback_lines, 8000);
         assert_eq!(config.cursor_shape, CursorShape::Bar);
+        assert_eq!(config.on_exit, OnExit::Close);
         assert_eq!(config.theme, "nord");
         assert_eq!(config.themes_file, theme::DEFAULT_THEMES_FILE);
     }
@@ -1019,6 +1355,7 @@ mod tests {
             font_size: 15.0,
             scrollback_lines: 4000,
             cursor_shape: CursorShape::Bar,
+            on_exit: OnExit::Keep,
             theme: "catppuccin-mocha".into(),
             themes_file: "palettes.toml".into(),
         };
@@ -1027,6 +1364,7 @@ mod tests {
         assert_eq!(again.font_size, 15.0);
         assert_eq!(again.scrollback_lines, 4000);
         assert_eq!(again.cursor_shape, CursorShape::Bar);
+        assert_eq!(again.on_exit, OnExit::Keep);
         assert_eq!(again.theme, "catppuccin-mocha");
         assert_eq!(again.themes_file, "palettes.toml");
     }
@@ -1080,6 +1418,17 @@ mod tests {
     }
 
     #[test]
+    fn parse_on_exit_aliases_and_fallback() {
+        assert_eq!(parse("[terminal]\non_exit = \"keep\"\n").unwrap().on_exit, OnExit::Keep);
+        assert_eq!(parse("[terminal]\non_exit = \"keep-open\"\n").unwrap().on_exit, OnExit::Keep);
+        assert_eq!(parse("[terminal]\non_exit = \"never\"\n").unwrap().on_exit, OnExit::Keep);
+        assert_eq!(parse("[terminal]\non_exit = \"close\"\n").unwrap().on_exit, OnExit::Close);
+        assert_eq!(parse("[terminal]\non_exit = \"always\"\n").unwrap().on_exit, OnExit::Close);
+        assert_eq!(parse("[terminal]\non_exit = \"maybe\"\n").unwrap().on_exit, OnExit::Close);
+        assert_eq!(parse("[terminal]\n").unwrap().on_exit, OnExit::Close);
+    }
+
+    #[test]
     fn parse_theme_from_appearance_or_top_level() {
         assert_eq!(parse("[appearance]\ntheme = \"gruvbox-dark\"\n").unwrap().theme, "gruvbox-dark");
         assert_eq!(parse("theme = \"solarized-light\"\n").unwrap().theme, "solarized-light");
@@ -1117,6 +1466,46 @@ mod tests {
         assert_eq!(parsed.display.as_deref(), Some("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"));
         let again = parse_window_frame(&parsed.render()).unwrap();
         assert_eq!(again, parsed);
+        assert_eq!(again.session_tabs, vec![1]);
+    }
+
+    #[test]
+    fn window_frame_round_trips_workspace_layout() {
+        let parsed = parse_window_frame(
+            "x = 10\ny = 20\nwidth = 800\nheight = 500\nsession_tabs = [2, 3]\nactive_session = 1\nactive_tabs = [1, 2]\n",
+        )
+        .unwrap();
+        assert_eq!(parsed.session_tabs, vec![2, 3]);
+        assert_eq!(parsed.active_session, 1);
+        assert_eq!(parsed.active_tabs, vec![1, 2]);
+        let again = parse_window_frame(&parsed.render()).unwrap();
+        assert_eq!(again.session_tabs, vec![2, 3]);
+        assert_eq!(again.active_session, 1);
+        assert_eq!(again.active_tabs, vec![1, 2]);
+        let layout = WorkspaceLayout::from_parts(vec![0, 99], 8, vec![4], Vec::new());
+        assert_eq!(layout.sessions.len(), 2);
+        assert_eq!(layout.sessions[0].tabs, 1);
+        assert_eq!(layout.sessions[0].active, 0);
+        assert_eq!(layout.sessions[0].cwds, vec![None]);
+        assert_eq!(layout.sessions[1].tabs, WORKSPACE_MAX_TABS);
+        assert_eq!(layout.active_session, 1);
+    }
+
+    #[test]
+    fn window_frame_round_trips_tab_cwds() {
+        let parsed = parse_window_frame(
+            "x = 10\ny = 20\nwidth = 800\nheight = 500\nsession_tabs = [2, 1]\nactive_session = 0\nactive_tabs = [1, 0]\ntab_cwds = [\"/tmp/a\", \"/tmp/b\", \"\"]\n",
+        )
+        .unwrap();
+        assert_eq!(parsed.tab_cwds, vec!["/tmp/a".to_string(), "/tmp/b".to_string(), String::new()]);
+        let again = parse_window_frame(&parsed.render()).unwrap();
+        assert_eq!(again.tab_cwds, parsed.tab_cwds);
+        let layout = WorkspaceLayout::from_parts(vec![2, 1], 0, vec![1, 0], parse_tab_cwds(["/tmp/a", "/tmp/b", ""]));
+        assert_eq!(
+            layout.sessions[0].cwds,
+            vec![Some(PathBuf::from("/tmp/a")), Some(PathBuf::from("/tmp/b"))]
+        );
+        assert_eq!(layout.sessions[1].cwds, vec![None]);
     }
 
     #[test]

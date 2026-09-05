@@ -1,4 +1,5 @@
 use std::{
+    path::PathBuf,
     sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
@@ -63,21 +64,36 @@ enum Command {
     ClearScreen,
     SetScrollback(u32),
     SetTheme(theme::Colors),
+    SaveState {
+        path: PathBuf,
+        done: Option<flume::Sender<()>>,
+    },
 }
 
 enum Event {
     Frame(Frame),
     Title(String),
+    Pwd(PathBuf),
     Exited,
 }
 
 pub enum SessionEvent {
     Exited,
     TitleChanged,
+    CwdChanged,
+}
+
+#[derive(Clone, Default)]
+pub struct TabRestore {
+    pub cwd: Option<PathBuf>,
+    pub snapshot: Option<Vec<u8>>,
 }
 
 pub struct Session {
     pub title: String,
+    pub cwd: Option<PathBuf>,
+    pub exited: bool,
+    pid: Option<u32>,
     focus: FocusHandle,
     commands: flume::Sender<Command>,
     frame: Frame,
@@ -98,7 +114,7 @@ struct LinkMenu {
 }
 
 impl Session {
-    pub fn spawn(index: usize, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn spawn(index: usize, window: &mut Window, cx: &mut Context<Self>, restore: TabRestore) -> Self {
         let (command_tx, command_rx) = flume::unbounded();
         let (event_tx, event_rx) = flume::unbounded();
         let (pty_tx, pty_rx) = flume::unbounded();
@@ -106,8 +122,10 @@ impl Session {
         let cell = frame::measure_cell(window, cx);
         let cols = 80;
         let rows = 24;
-        let pty = pty::spawn_shell(cols, rows, f32::from(cell.x) as u32, f32::from(cell.y) as u32, pty_tx)
+        let cwd = crate::cwd::usable_cwd(restore.cwd.as_deref());
+        let pty = pty::spawn_shell(cols, rows, f32::from(cell.x) as u32, f32::from(cell.y) as u32, pty_tx, cwd.as_deref())
             .expect("failed to spawn shell");
+        let pid = pty.pid;
 
         let command_tx_pty = command_tx.clone();
         let event_tx_exit = event_tx.clone();
@@ -132,6 +150,7 @@ impl Session {
             cell,
             crate::config::scrollback_lines(cx),
             theme::colors(cx),
+            restore.snapshot,
         );
 
         let focus = cx.focus_handle();
@@ -139,7 +158,6 @@ impl Session {
 
         cx.spawn(async move |this, cx| {
             while let Ok(event) = event_rx.recv_async().await {
-                let exited = matches!(event, Event::Exited);
                 if this
                     .update(cx, |this, cx| {
                         match event {
@@ -148,16 +166,24 @@ impl Session {
                                 this.recompute_hovered_link();
                             }
                             Event::Title(title) if !title.is_empty() => {
-                                this.title = title;
+                                this.title = if this.exited { format!("{title} (exited)") } else { title };
                                 cx.emit(SessionEvent::TitleChanged);
                             }
                             Event::Title(_) => {}
-                            Event::Exited => cx.emit(SessionEvent::Exited),
+                            Event::Pwd(path) => {
+                                if this.cwd.as_ref() != Some(&path) {
+                                    this.cwd = Some(path);
+                                    cx.emit(SessionEvent::CwdChanged);
+                                }
+                            }
+                            Event::Exited => {
+                                this.mark_exited(cx);
+                                cx.emit(SessionEvent::Exited);
+                            }
                         }
                         cx.notify();
                     })
                     .is_err()
-                    || exited
                 {
                     break;
                 }
@@ -167,6 +193,9 @@ impl Session {
 
         Self {
             title: format!("Tab {}", index + 1),
+            cwd,
+            exited: false,
+            pid,
             focus,
             commands: command_tx,
             frame: empty_frame(theme::colors(cx)),
@@ -210,7 +239,22 @@ impl Session {
         .detach();
     }
 
+    fn mark_exited(&mut self, cx: &mut Context<Self>) {
+        if self.exited {
+            return;
+        }
+        self.exited = true;
+        const SUFFIX: &str = " (exited)";
+        if !self.title.ends_with(SUFFIX) {
+            self.title.push_str(SUFFIX);
+            cx.emit(SessionEvent::TitleChanged);
+        }
+    }
+
     pub fn paste_clipboard(&self, cx: &mut Context<Self>) {
+        if self.exited {
+            return;
+        }
         let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
             crate::notify::show(cx, "Clipboard is empty");
             return;
@@ -223,7 +267,31 @@ impl Session {
     }
 
     pub fn clear_screen(&self) {
+        if self.exited {
+            return;
+        }
         let _ = self.commands.send(Command::ClearScreen);
+    }
+
+    pub fn refresh_cwd(&mut self) {
+        let Some(pid) = self.pid else {
+            return;
+        };
+        if let Some(path) = crate::cwd::process_cwd(pid) {
+            self.cwd = Some(path);
+        }
+    }
+
+    pub fn request_save_state(&self, path: PathBuf) {
+        let _ = self.commands.send(Command::SaveState { path, done: None });
+    }
+
+    pub fn flush_state(&self, path: PathBuf) {
+        let (tx, rx) = flume::bounded(1);
+        if self.commands.send(Command::SaveState { path, done: Some(tx) }).is_err() {
+            return;
+        }
+        let _ = rx.recv_timeout(Duration::from_millis(200));
     }
 
     pub fn apply_config(&mut self, cx: &mut Context<Self>) {
@@ -241,6 +309,10 @@ impl Session {
             return;
         }
         if reserved_shortcut(&event.keystroke.modifiers, &event.keystroke.key) {
+            return;
+        }
+        if self.exited {
+            cx.stop_propagation();
             return;
         }
         if let Some(encoded) = input::encode_keystroke(&event.keystroke) {
@@ -505,6 +577,7 @@ impl Render for Session {
                 )
                 .size_full(),
             )
+            .when(self.exited, |el| el.child(exited_banner(colors)))
             .children(link_menu.map(|menu| link_context_menu(menu, cx)))
     }
 }
@@ -600,6 +673,22 @@ fn reserved_shortcut(modifiers: &gpui::Modifiers, key: &str) -> bool {
     modifiers.control && (digit || key == ",")
 }
 
+fn exited_banner(colors: theme::Colors) -> impl IntoElement {
+    div()
+        .absolute()
+        .bottom_0()
+        .left_0()
+        .right_0()
+        .px_3()
+        .py_2()
+        .bg(rgb(colors.window))
+        .border_t_1()
+        .border_color(rgb(colors.sidebar_border))
+        .text_sm()
+        .text_color(rgb(colors.text_dim))
+        .child("Shell exited. This tab is still open.")
+}
+
 fn empty_frame(colors: theme::Colors) -> Frame {
     let (br, bg, bb) = theme::Colors::rgb_parts(colors.term_bg);
     let (fr, fg, fb) = theme::Colors::rgb_parts(colors.term_fg);
@@ -649,6 +738,30 @@ fn apply_terminal_theme(terminal: &mut Terminal, colors: theme::Colors) -> Resul
     Ok(())
 }
 
+fn restore_terminal(
+    snapshot: Option<&[u8]>,
+    cols: u16,
+    rows: u16,
+) -> Result<Terminal<'static, 'static>, Box<dyn std::error::Error>> {
+    if let Some(bytes) = snapshot {
+        if !bytes.is_empty() {
+            if let Ok(terminal) = libghostty_vt::snapshot::Decoder::new_buf(bytes).and_then(|decoder| decoder.decode()) {
+                return Ok(terminal);
+            }
+        }
+    }
+    Ok(Terminal::new(cols, rows)?)
+}
+
+fn terminal_cwd(terminal: &Terminal, pid: Option<u32>) -> Option<PathBuf> {
+    if let Ok(raw) = terminal.pwd() {
+        if let Some(path) = crate::cwd::parse_pwd(raw) {
+            return Some(path);
+        }
+    }
+    pid.and_then(crate::cwd::process_cwd)
+}
+
 fn start_emulator(
     pty: PtyIo,
     commands: flume::Receiver<Command>,
@@ -658,11 +771,12 @@ fn start_emulator(
     cell: gpui::Point<Pixels>,
     scrollback_lines: u32,
     colors: theme::Colors,
+    snapshot: Option<Vec<u8>>,
 ) {
     thread::Builder::new()
         .name("libghostty".into())
         .spawn(move || {
-            if let Err(error) = run_emulator(pty, commands, events, cols, rows, cell, scrollback_lines, colors) {
+            if let Err(error) = run_emulator(pty, commands, events, cols, rows, cell, scrollback_lines, colors, snapshot) {
                 eprintln!("terminal thread exited: {error}");
             }
         })
@@ -678,6 +792,7 @@ fn run_emulator(
     cell: gpui::Point<Pixels>,
     scrollback_lines: u32,
     colors: theme::Colors,
+    snapshot: Option<Vec<u8>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let grid = Arc::new(Mutex::new(SizeReportSize {
         rows,
@@ -686,10 +801,12 @@ fn run_emulator(
         cell_height: f32::from(cell.y) as u32,
     }));
 
-    let mut terminal = Terminal::new(cols, rows)?;
+    let mut terminal = restore_terminal(snapshot.as_deref(), cols, rows)?;
+    let _ = terminal.set_continuation_max_bytes(64 * 1024);
     terminal.set_scrollback_max_lines(Some(scrollback_lines as usize))?;
     terminal.resize(cols, rows, f32::from(cell.x) as u32, f32::from(cell.y) as u32)?;
     apply_terminal_theme(&mut terminal, colors)?;
+    let pid = pty.pid;
 
     let writer = pty.writer.clone();
     terminal.on_pty_write(move |_term, data| {
@@ -731,11 +848,16 @@ fn run_emulator(
     let mut release_event = ReleaseEvent::new()?;
     let started = Instant::now();
     let mut last_title = String::new();
+    let mut last_cwd: Option<PathBuf> = None;
     let mut encoded = Vec::new();
 
     while let Ok(command) = commands.recv() {
+        let mut refresh_cwd = false;
         match command {
-            Command::PtyBytes(bytes) => terminal.vt_write(&bytes),
+            Command::PtyBytes(bytes) => {
+                terminal.vt_write(&bytes);
+                refresh_cwd = true;
+            }
             Command::Key(input) => {
                 let _ = terminal.set_selection(None);
                 encoded.clear();
@@ -814,6 +936,26 @@ fn run_emulator(
             }
             Command::SetTheme(colors) => {
                 apply_terminal_theme(&mut terminal, colors)?;
+            }
+            Command::SaveState { path, done } => {
+                if let Ok(Some(bytes)) = terminal.encode_snapshot_alloc(None) {
+                    crate::config::write_tab_snapshot(&path, &bytes);
+                }
+                refresh_cwd = true;
+                if let Some(done) = done {
+                    let _ = done.send(());
+                }
+            }
+        }
+
+        if refresh_cwd {
+            if let Some(cwd) = terminal_cwd(&terminal, pid) {
+                if last_cwd.as_ref() != Some(&cwd) {
+                    last_cwd = Some(cwd.clone());
+                    if events.send(Event::Pwd(cwd)).is_err() {
+                        break;
+                    }
+                }
             }
         }
 

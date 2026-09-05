@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod config;
+mod cwd;
 mod frame;
 mod input;
 mod notify;
@@ -14,7 +15,7 @@ use gpui::{
     MouseButton, MouseDownEvent, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, point,
     prelude::*, px, rgb, size,
 };
-use session::{Session, SessionEvent};
+use session::{Session, SessionEvent, TabRestore};
 
 actions!(
     ghostterm,
@@ -56,10 +57,26 @@ struct SessionGroup {
 
 impl SessionGroup {
     fn spawn(window: &mut Window, cx: &mut Context<Workspace>) -> Self {
-        let tab = cx.new(|cx| Session::spawn(0, window, cx));
+        Self::spawn_tabs(1, 0, Vec::new(), window, cx)
+    }
+
+    fn spawn_tabs(
+        count: usize,
+        active: usize,
+        restores: Vec<TabRestore>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Self {
+        let count = count.max(1);
+        let tabs = (0..count)
+            .map(|index| {
+                let restore = restores.get(index).cloned().unwrap_or_default();
+                cx.new(|cx| Session::spawn(index, window, cx, restore))
+            })
+            .collect();
         Self {
-            tabs: vec![tab],
-            active: 0,
+            tabs,
+            active: active.min(count - 1),
         }
     }
 
@@ -128,17 +145,37 @@ impl Render for SplitDragPreview {
 }
 
 impl Workspace {
-    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let first = SessionGroup::spawn(window, cx);
+    fn new(restore: bool, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let layout = if restore {
+            config::restored_workspace_layout()
+        } else {
+            config::WorkspaceLayout::default()
+        };
+        let sessions = layout
+            .sessions
+            .iter()
+            .enumerate()
+            .map(|(session_index, spec)| {
+                let restores = (0..spec.tabs)
+                    .map(|tab| TabRestore {
+                        cwd: spec.cwds.get(tab).cloned().flatten(),
+                        snapshot: config::read_tab_snapshot(session_index, tab),
+                    })
+                    .collect();
+                SessionGroup::spawn_tabs(spec.tabs, spec.active, restores, window, cx)
+            })
+            .collect::<Vec<_>>();
         let workspace = Self {
-            sessions: vec![first],
-            active_session: 0,
+            sessions,
+            active_session: layout.active_session,
             sidebar_width: config::restored_sidebar_width(),
             sidebar_split_locked: false,
             dragging_tab: None,
             tab_insert_at: None,
         };
-        workspace.subscribe_group(0, window, cx);
+        for index in 0..workspace.sessions.len() {
+            workspace.subscribe_group(index, window, cx);
+        }
         cx.observe_global::<notify::Notifications>(|_, cx| cx.notify()).detach();
         cx.observe_global::<config::AppSettings>(|this, cx| {
             this.apply_config(cx);
@@ -169,8 +206,13 @@ impl Workspace {
 
     fn subscribe_terminal(&self, tab: &gpui::Entity<Session>, window: &Window, cx: &mut Context<Self>) {
         cx.subscribe_in(tab, window, |this, session, event: &SessionEvent, window, cx| match event {
-            SessionEvent::Exited => this.close_terminal(session, window, cx),
+            SessionEvent::Exited => {
+                if !config::keep_tab_on_exit(cx) {
+                    this.close_terminal(session, window, cx);
+                }
+            }
             SessionEvent::TitleChanged => cx.notify(),
+            SessionEvent::CwdChanged => this.persist_layout(cx),
         })
         .detach();
     }
@@ -186,6 +228,7 @@ impl Workspace {
         self.active_session = index;
         self.subscribe_group(index, window, cx);
         self.focus_active(window, cx);
+        self.persist_layout(cx);
         cx.notify();
     }
 
@@ -194,11 +237,12 @@ impl Workspace {
             return;
         };
         let index = group.tabs.len();
-        let tab = cx.new(|cx| Session::spawn(index, window, cx));
+        let tab = cx.new(|cx| Session::spawn(index, window, cx, TabRestore::default()));
         group.tabs.push(tab.clone());
         group.active = index;
         self.subscribe_terminal(&tab, window, cx);
         self.focus_active(window, cx);
+        self.persist_layout(cx);
         cx.notify();
     }
 
@@ -206,6 +250,7 @@ impl Workspace {
         if index < self.sessions.len() {
             self.active_session = index;
             self.focus_active(window, cx);
+            self.persist_layout(cx);
             cx.notify();
         }
     }
@@ -215,6 +260,7 @@ impl Workspace {
             if index < group.tabs.len() {
                 group.active = index;
                 self.focus_active(window, cx);
+                self.persist_layout(cx);
                 cx.notify();
             }
         }
@@ -244,6 +290,7 @@ impl Workspace {
             group.active -= 1;
         }
         self.focus_active(window, cx);
+        self.persist_layout(cx);
         cx.notify();
     }
 
@@ -252,6 +299,7 @@ impl Workspace {
             return;
         }
         if self.sessions.len() == 1 {
+            self.persist_layout_and_flush(cx);
             window.remove_window();
             return;
         }
@@ -262,6 +310,7 @@ impl Workspace {
             self.active_session -= 1;
         }
         self.focus_active(window, cx);
+        self.persist_layout(cx);
         cx.notify();
     }
 
@@ -363,7 +412,45 @@ impl Workspace {
         self.sessions.insert(dest, session);
         self.active_session = active_after_reorder(self.active_session, from, dest);
         self.focus_active(window, cx);
+        self.persist_layout(cx);
         cx.notify();
+    }
+
+    fn persist_layout(&self, cx: &mut Context<Self>) {
+        self.write_layout(cx, false);
+    }
+
+    fn persist_layout_and_flush(&self, cx: &mut Context<Self>) {
+        self.write_layout(cx, true);
+    }
+
+    fn write_layout(&self, cx: &mut Context<Self>, flush: bool) {
+        for group in &self.sessions {
+            for tab in &group.tabs {
+                tab.update(cx, |session, _| session.refresh_cwd());
+            }
+        }
+        let sessions = self
+            .sessions
+            .iter()
+            .map(|group| {
+                let cwds = group.tabs.iter().map(|tab| tab.read(cx).cwd.clone()).collect();
+                (group.tabs.len(), group.active, cwds)
+            })
+            .collect::<Vec<_>>();
+        let layout = config::WorkspaceLayout::from_workspace(&sessions, self.active_session);
+        config::save_workspace_layout(layout.clone());
+        for (session_index, group) in self.sessions.iter().enumerate() {
+            for (tab_index, tab) in group.tabs.iter().enumerate() {
+                let path = config::tab_snapshot_path(session_index, tab_index);
+                if flush {
+                    tab.read(cx).flush_state(path);
+                } else {
+                    tab.read(cx).request_save_state(path);
+                }
+            }
+        }
+        config::prune_tab_snapshots(&layout);
     }
 }
 
@@ -1099,7 +1186,8 @@ fn open_workspace_window(cx: &mut App) {
             config::save_window_state(window, cx);
             true
         });
-        cx.new(|cx| Workspace::new(window, cx))
+        let restore = cx.windows().len() <= 1;
+        cx.new(|cx| Workspace::new(restore, window, cx))
     });
 }
 
@@ -1119,7 +1207,8 @@ fn save_workspace_windows(cx: &mut App) {
         let Some(workspace) = handle.downcast::<Workspace>() else {
             continue;
         };
-        let _ = workspace.update(cx, |_, window, cx| {
+        let _ = workspace.update(cx, |this, window, cx| {
+            this.persist_layout_and_flush(cx);
             config::save_window_state(window, cx);
         });
     }

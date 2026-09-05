@@ -14,9 +14,10 @@ A terminal emulator built in Rust with [GPUI](https://github.com/zed-industries/
 - Right-click a URL, URI, or path for **Copy**, **Paste**, and **Open Link** (or **Open Folder**)
 - In-app toasts for copy and paste feedback (bottom-right, click or wait to dismiss)
 - **⌘K** clears the screen and scrollback; the shell redraws the prompt at the top
-- Settings window (**⌘,** or **Ghostterm → Settings**) for theme, font family, size, cursor style, and scrollback; values are stored in a Ghostterm-owned config file you can also edit by hand
+- Settings window (**⌘,** or **Ghostterm → Settings**) for theme, font family, size, cursor style, scrollback, and whether a tab stays open after the shell exits; values are stored in a Ghostterm-owned config file you can also edit by hand
+- Reopening the app restores sessions, tabs, each tab’s working directory, and the text that was on screen
 - New window with **⌘N** or **File → New Window**; closing the last session leaves the app running so a Dock click (or ⌘N) can open another
-- Typing `exit` in the top-level shell closes that tab; the last tab in a session closes the session; the last session closes the window without quitting the app
+- Typing `exit` in the top-level shell closes that tab by default; **Settings → When shell exits** can keep the tab open instead. The last tab in a session closes the session; the last session closes the window without quitting the app
 
 ## Requirements
 
@@ -70,7 +71,7 @@ Ghostterm reads a TOML file it owns (not libghostty). The file is created the fi
 
 If `XDG_CONFIG_HOME` is set, that directory is used instead of `~/.config`. An existing folder at the previous locations (`~/Library/Application Support/Ghostterm` on macOS, `%APPDATA%\Ghostterm` on Windows) is still used until you move it.
 
-Window position, size, which monitor it was on, and the sidebar split width are stored separately in `window.toml` in the same folder, so moving or resizing the app does not rewrite `config.toml`. Extra windows opened with ⌘N are offset from that saved frame. If that monitor is unplugged, the window is centered on the current screen. Drag the border between the sessions list and the terminal to resize; double-click it or use **Reset to Defaults** in Settings to restore the 220px width.
+Window position, size, which monitor it was on, the sidebar split width, and the session/tab layout are stored separately in `window.toml` in the same folder, so moving or resizing the app does not rewrite `config.toml`. Extra windows opened with ⌘N are offset from that saved frame and start with one session. If that monitor is unplugged, the window is centered on the current screen. Drag the border between the sessions list and the terminal to resize; double-click it or use **Reset to Defaults** in Settings to restore the 220px width. Reopening the app restores the last sessions and tabs, each tab’s working directory, and the text that was on screen. A new shell starts in that directory (running commands are not resumed). Screen snapshots live in `state/` next to `window.toml`.
 
 ```toml
 [font]
@@ -84,6 +85,7 @@ themes = "themes"
 [terminal]
 scrollback_lines = 2000
 cursor = "bar" # or "block"
+on_exit = "close" # or "keep"
 ```
 
 `theme` is the filename stem of a Ghostty `.conf` in the themes folder (`nord`, `one-dark`, `tokyo-night`, `catppuccin-mocha`, `catppuccin-frappe`, `gruvbox-dark`, `solarized-light`). `themes` is that folder: relative to `config.toml`, or absolute.
@@ -115,10 +117,11 @@ The Settings window writes `config.toml` when you change a value. Editing the co
 - [x] New window (⌘N), including reopen from the Dock when no windows are open
 - [x] Horizontal tabs for each session
 - [x] Remember window position and size across launches
+- [x] Restore sessions, tabs, working directories, and on-screen history
 - [x] Draggable split to resize the tab sidebar vs the terminal
 - [x] Drag to reorder tabs in the sidebar
 - [ ] Rename tabs
-- [ ] Option to keep a tab open after the shell exits
+- [x] Option to keep a tab open after the shell exits
 - [ ] Option to turn off sessions and have simple terminal with horizontal tabs
 
 ### Rendering
@@ -139,7 +142,8 @@ The Settings window writes `config.toml` when you change a value. Editing the co
 - [ ] IME / composed input (accents, CJK, dead keys)
 - [ ] Find in scrollback (⌘F)
 - [ ] Split panes
-- [ ] OSC 7 working directory / remote-aware paths
+- [x] Restore the local working directory of each tab (OSC 7 when the shell sends it, otherwise the process cwd)
+- [ ] OSC 7 remote-aware paths
 - [ ] Underline URLs and paths without holding ⌘
 - [ ] Create a test suite (see [Test suite](#test-suite))
 
@@ -163,10 +167,11 @@ Config parse/round-trip tests live in `src/config.rs` (`cargo test`). A broader 
 
 ### Sessions and window
 
-- Top-level shell exit closes that tab
+- Top-level shell exit closes that tab, or keeps it open when `on_exit = "keep"`
 - Last tab in a session closes the session; last session closes the window without quitting the app
 - Nested `exit` (subshell) does not close the tab
 - Adding and closing sessions and tabs updates the active index
+- Reopening the app restores tab counts, each tab’s working directory, and on-screen history
 - ⌘N opens another window; Dock click with no windows opens one too
 
 ### Terminal surface
