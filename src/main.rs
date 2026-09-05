@@ -47,6 +47,10 @@ impl Workspace {
         })
         .detach();
         cx.observe_window_activation(window, |_, _, cx| cx.notify()).detach();
+        cx.observe_window_bounds(window, |_, window, cx| {
+            config::save_window_state(window, cx);
+        })
+        .detach();
         workspace
     }
 
@@ -415,7 +419,10 @@ fn main() {
     });
     app.run(|cx: &mut App| {
         config::init(cx);
-        cx.on_action(|_: &Quit, cx| cx.quit());
+        cx.on_action(|_: &Quit, cx| {
+            save_workspace_windows(cx);
+            cx.quit();
+        });
         cx.on_action(|_: &NewWindow, cx| {
             open_workspace_window(cx);
         });
@@ -474,17 +481,42 @@ fn main() {
 }
 
 fn open_workspace_window(cx: &mut App) {
-    let _ = cx.open_window(workspace_window_options(cx), |window, cx| cx.new(|cx| Workspace::new(window, cx)));
+    let _ = cx.open_window(workspace_window_options(cx), |window, cx| {
+        window.on_window_should_close(cx, |window, cx| {
+            config::save_window_state(window, cx);
+            true
+        });
+        cx.new(|cx| Workspace::new(window, cx))
+    });
+}
+
+fn save_workspace_windows(cx: &mut App) {
+    for handle in cx.windows() {
+        let Some(workspace) = handle.downcast::<Workspace>() else {
+            continue;
+        };
+        let _ = workspace.update(cx, |_, window, cx| {
+            config::save_window_state(window, cx);
+        });
+    }
 }
 
 fn workspace_window_options(cx: &App) -> WindowOptions {
     let window_size = size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT));
-    let mut bounds = Bounds::centered(None, window_size, cx);
+    let (mut window_bounds, display_id) =
+        config::restored_window(cx).unwrap_or_else(|| (WindowBounds::Windowed(Bounds::centered(None, window_size, cx)), None));
     let stagger = cx.windows().len() as f32;
-    bounds.origin = bounds.origin + point(px(stagger * NEW_WINDOW_OFFSET), px(stagger * NEW_WINDOW_OFFSET));
+    if stagger > 0.0 {
+        let offset = point(px(stagger * NEW_WINDOW_OFFSET), px(stagger * NEW_WINDOW_OFFSET));
+        match &mut window_bounds {
+            WindowBounds::Windowed(bounds) | WindowBounds::Maximized(bounds) | WindowBounds::Fullscreen(bounds) => {
+                bounds.origin = bounds.origin + offset;
+            }
+        }
+    }
 
     WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(bounds)),
+        window_bounds: Some(window_bounds),
         titlebar: Some(TitlebarOptions {
             title: Some("Ghostterm".into()),
             appears_transparent: false,
@@ -494,8 +526,8 @@ fn workspace_window_options(cx: &App) -> WindowOptions {
         show: true,
         kind: gpui::WindowKind::Normal,
         is_movable: true,
-        display_id: None,
-        window_min_size: Some(size(px(640.0), px(400.0))),
+        display_id,
+        window_min_size: Some(size(px(config::WINDOW_MIN_WIDTH), px(config::WINDOW_MIN_HEIGHT))),
         window_background: gpui::WindowBackgroundAppearance::Opaque,
         app_id: Some(APP_ID.into()),
         is_resizable: true,

@@ -65,6 +65,8 @@ Ghostterm reads a TOML file it owns (not libghostty). The file is created the fi
 
 If `XDG_CONFIG_HOME` is set, that directory is used instead of `~/.config`. An existing folder at the previous locations (`~/Library/Application Support/Ghostterm` on macOS, `%APPDATA%\Ghostterm` on Windows) is still used until you move it.
 
+Window position, size, and which monitor it was on are stored separately in `window.toml` in the same folder, so moving or resizing the app does not rewrite `config.toml`. Extra windows opened with ⌘N are offset from that saved frame. If that monitor is unplugged, the window is centered on the current screen.
+
 ```toml
 [font]
 family = "Menlo"
@@ -107,7 +109,7 @@ The Settings window writes `config.toml` when you change a value. Editing the co
 
 - [x] New window (⌘N), including reopen from the Dock when no windows are open
 - [ ] Horizontal tabs for each session
-- [ ] Remember window position and size across launches
+- [x] Remember window position and size across launches
 - [ ] Draggable split to resize the tab sidebar vs the terminal
 - [ ] Drag to reorder tabs in the sidebar
 - [ ] Rename tabs

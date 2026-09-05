@@ -4,7 +4,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use gpui::{App, Global, SharedString, Timer};
+use gpui::{App, Bounds, DisplayId, Global, Pixels, SharedString, Timer, WindowBounds, point, px, size};
 use serde::Deserialize;
 
 use crate::{notify, pty, theme};
@@ -14,6 +14,146 @@ pub const FONT_SIZE_MIN: f32 = 8.0;
 pub const FONT_SIZE_MAX: f32 = 48.0;
 pub const SCROLLBACK_MIN: u32 = 100;
 pub const SCROLLBACK_MAX: u32 = 100_000;
+pub const WINDOW_MIN_WIDTH: f32 = 640.0;
+pub const WINDOW_MIN_HEIGHT: f32 = 400.0;
+const WINDOW_STATE_FILE: &str = "window.toml";
+
+static LAST_WINDOW_FRAME: Mutex<Option<WindowFrame>> = Mutex::new(None);
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WindowState {
+    #[default]
+    Windowed,
+    Maximized,
+    Fullscreen,
+}
+
+impl WindowState {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Windowed => "windowed",
+            Self::Maximized => "maximized",
+            Self::Fullscreen => "fullscreen",
+        }
+    }
+
+    fn parse(value: Option<&str>) -> Self {
+        match value.map(str::trim) {
+            Some(value) if value.eq_ignore_ascii_case("maximized") => Self::Maximized,
+            Some(value) if value.eq_ignore_ascii_case("fullscreen") => Self::Fullscreen,
+            _ => Self::Windowed,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct WindowFrame {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub display: Option<String>,
+    pub state: WindowState,
+}
+
+impl WindowFrame {
+    fn from_window(window: &gpui::Window, cx: &App, last: Option<&Self>) -> Option<Self> {
+        if window.display(cx).is_none() {
+            return None;
+        }
+        let origin = window.bounds().origin;
+        let size = window.viewport_size();
+        let state = if matches!(window.window_bounds(), WindowBounds::Fullscreen(_)) {
+            WindowState::Fullscreen
+        } else if window.is_maximized() {
+            WindowState::Maximized
+        } else {
+            WindowState::Windowed
+        };
+        let display = window
+            .display(cx)
+            .and_then(|display| display.uuid().ok())
+            .map(|id| id.to_string());
+        // Zoomed/fullscreen bounds are the screen, not the restore size. Keep the last windowed frame.
+        let (x, y, width, height) = if state == WindowState::Windowed || last.is_none() {
+            (f32::from(origin.x), f32::from(origin.y), f32::from(size.width), f32::from(size.height))
+        } else {
+            let last = last.unwrap();
+            (last.x, last.y, last.width, last.height)
+        };
+        Self {
+            x,
+            y,
+            width,
+            height,
+            display,
+            state,
+        }
+        .sanitized()
+    }
+
+    fn to_bounds(&self) -> Bounds<Pixels> {
+        Bounds {
+            origin: point(px(self.x), px(self.y)),
+            size: size(px(self.width), px(self.height)),
+        }
+    }
+
+    fn to_window_bounds(&self) -> WindowBounds {
+        let bounds = self.to_bounds();
+        match self.state {
+            WindowState::Windowed => WindowBounds::Windowed(bounds),
+            WindowState::Maximized => WindowBounds::Maximized(bounds),
+            WindowState::Fullscreen => WindowBounds::Fullscreen(bounds),
+        }
+    }
+
+    fn sanitized(self) -> Option<Self> {
+        if ![self.x, self.y, self.width, self.height].into_iter().all(f32::is_finite) {
+            return None;
+        }
+        if self.width <= 0.0 || self.height <= 0.0 {
+            return None;
+        }
+        let display = self
+            .display
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        Some(Self {
+            x: self.x,
+            y: self.y,
+            width: self.width.max(WINDOW_MIN_WIDTH),
+            height: self.height.max(WINDOW_MIN_HEIGHT),
+            display,
+            state: self.state,
+        })
+    }
+
+    fn render(&self) -> String {
+        let display = self
+            .display
+            .as_deref()
+            .map(|id| format!("display = {}\n", toml_string(id)))
+            .unwrap_or_default();
+        format!(
+            "\
+# Last Ghostterm window position and size. Updated when you move or resize the window.
+# `display` is the monitor UUID so the window reopens on the same screen.
+# `state` is windowed, maximized, or fullscreen. x/y/width/height are the restored windowed frame.
+x = {x}
+y = {y}
+width = {width}
+height = {height}
+state = {state}
+{display}",
+            x = format_number(self.x),
+            y = format_number(self.y),
+            width = format_number(self.width),
+            height = format_number(self.height),
+            state = toml_string(self.state.as_str()),
+        )
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CursorShape {
@@ -404,6 +544,126 @@ pub fn config_path() -> Option<PathBuf> {
     config_dir().map(|dir| dir.join("config.toml"))
 }
 
+pub fn save_window_state(window: &gpui::Window, cx: &App) {
+    let last = LAST_WINDOW_FRAME.lock().ok().and_then(|guard| guard.clone());
+    let Some(frame) = WindowFrame::from_window(window, cx, last.as_ref()) else {
+        return;
+    };
+    if last.as_ref() == Some(&frame) {
+        return;
+    }
+    if let Ok(mut guard) = LAST_WINDOW_FRAME.lock() {
+        *guard = Some(frame.clone());
+    }
+    let path = window_state_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(path, frame.render());
+}
+
+pub fn restored_window(cx: &App) -> Option<(WindowBounds, Option<DisplayId>)> {
+    let frame = load_window_frame()?;
+    if let Ok(mut last) = LAST_WINDOW_FRAME.lock() {
+        *last = Some(frame.clone());
+    }
+    let display_id = frame.display.as_deref().and_then(|uuid| display_id_for_uuid(cx, uuid));
+    let bounds = match display_id.and_then(|id| cx.find_display(id)) {
+        Some(display) => clamp_to_display(frame.to_bounds(), display.bounds()),
+        None => clamp_window_bounds(frame.to_bounds(), cx),
+    };
+    let mut window_bounds = frame.to_window_bounds();
+    match &mut window_bounds {
+        WindowBounds::Windowed(saved) | WindowBounds::Maximized(saved) | WindowBounds::Fullscreen(saved) => {
+            *saved = bounds;
+        }
+    }
+    Some((window_bounds, display_id))
+}
+
+fn window_state_path() -> PathBuf {
+    config_dir()
+        .map(|dir| dir.join(WINDOW_STATE_FILE))
+        .unwrap_or_else(|| PathBuf::from(WINDOW_STATE_FILE))
+}
+
+fn load_window_frame() -> Option<WindowFrame> {
+    let text = std::fs::read_to_string(window_state_path()).ok()?;
+    parse_window_frame(&text)
+}
+
+fn parse_window_frame(text: &str) -> Option<WindowFrame> {
+    let file: WindowFile = toml::from_str(text).ok()?;
+    WindowFrame {
+        x: file.x?,
+        y: file.y?,
+        width: file.width?,
+        height: file.height?,
+        display: file.display,
+        state: WindowState::parse(file.state.as_deref()),
+    }
+    .sanitized()
+}
+
+fn display_id_for_uuid(cx: &App, uuid: &str) -> Option<DisplayId> {
+    cx.displays().into_iter().find_map(|display| {
+        display
+            .uuid()
+            .ok()
+            .filter(|id| id.to_string().eq_ignore_ascii_case(uuid))
+            .map(|_| display.id())
+    })
+}
+
+fn clamp_to_display(bounds: Bounds<Pixels>, display: Bounds<Pixels>) -> Bounds<Pixels> {
+    let min = size(px(WINDOW_MIN_WIDTH), px(WINDOW_MIN_HEIGHT));
+    let width = bounds.size.width.max(min.width).min(display.size.width.max(min.width));
+    let height = bounds.size.height.max(min.height).min(display.size.height.max(min.height));
+    let local_display = Bounds {
+        origin: point(px(0.0), px(0.0)),
+        size: display.size,
+    };
+    let bounds = Bounds {
+        origin: bounds.origin,
+        size: size(width, height),
+    };
+    if is_usable_on_display(&bounds, &local_display) {
+        bounds
+    } else {
+        Bounds::centered_at(local_display.center(), bounds.size)
+    }
+}
+
+fn clamp_window_bounds(bounds: Bounds<Pixels>, cx: &App) -> Bounds<Pixels> {
+    let min = size(px(WINDOW_MIN_WIDTH), px(WINDOW_MIN_HEIGHT));
+    let width = bounds.size.width.max(min.width);
+    let height = bounds.size.height.max(min.height);
+    let bounds = Bounds {
+        origin: bounds.origin,
+        size: size(width, height),
+    };
+    let displays: Vec<_> = cx.displays().into_iter().map(|display| display.bounds()).collect();
+    if displays.is_empty() || displays.iter().any(|display| is_usable_on_display(&bounds, display)) {
+        return bounds;
+    }
+    Bounds::centered(None, bounds.size, cx)
+}
+
+fn is_usable_on_display(bounds: &Bounds<Pixels>, display: &Bounds<Pixels>) -> bool {
+    let hit = bounds.intersect(display);
+    f32::from(hit.size.width) >= 80.0 && f32::from(hit.size.height) >= 40.0
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct WindowFile {
+    x: Option<f32>,
+    y: Option<f32>,
+    width: Option<f32>,
+    height: Option<f32>,
+    display: Option<String>,
+    state: Option<String>,
+}
+
 fn config_dir() -> Option<PathBuf> {
     let preferred =
         preferred_config_dir(pty::home_dir().as_deref(), std::env::var_os("XDG_CONFIG_HOME").as_deref().map(Path::new))?;
@@ -766,5 +1026,39 @@ mod tests {
             Some(Path::new("/custom/xdg/ghostterm"))
         );
         assert_eq!(preferred_config_dir(None, None), None);
+    }
+
+    #[test]
+    fn window_frame_round_trip() {
+        let parsed = parse_window_frame(
+            "x = 120\ny = 80\nwidth = 800\nheight = 500\nstate = \"windowed\"\ndisplay = \"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\"\n",
+        )
+        .unwrap();
+        assert_eq!(parsed.x, 120.0);
+        assert_eq!(parsed.y, 80.0);
+        assert_eq!(parsed.width, 800.0);
+        assert_eq!(parsed.height, 500.0);
+        assert_eq!(parsed.state, WindowState::Windowed);
+        assert_eq!(parsed.display.as_deref(), Some("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"));
+        let again = parse_window_frame(&parsed.render()).unwrap();
+        assert_eq!(again, parsed);
+    }
+
+    #[test]
+    fn window_frame_parses_maximized_and_defaults_state() {
+        let maximized = parse_window_frame("x = 40\ny = 60\nwidth = 900\nheight = 600\nstate = \"maximized\"\n").unwrap();
+        assert_eq!(maximized.state, WindowState::Maximized);
+        assert_eq!(maximized.width, 900.0);
+        let legacy = parse_window_frame("x = 40\ny = 60\nwidth = 900\nheight = 600\n").unwrap();
+        assert_eq!(legacy.state, WindowState::Windowed);
+    }
+
+    #[test]
+    fn window_frame_clamps_small_size_and_rejects_invalid() {
+        let small = parse_window_frame("x = 10\ny = 10\nwidth = 200\nheight = 100\n").unwrap();
+        assert_eq!(small.width, WINDOW_MIN_WIDTH);
+        assert_eq!(small.height, WINDOW_MIN_HEIGHT);
+        assert!(parse_window_frame("x = 1\ny = 2\n").is_none());
+        assert!(parse_window_frame("x = nan\ny = 0\nwidth = 800\nheight = 600\n").is_none());
     }
 }
