@@ -30,7 +30,7 @@ A native terminal with a reliable bearing, built in Rust with [GPUI](https://git
 - [Rust](https://rustup.rs/) (stable)
 - [Zig](https://ziglang.org/) for the libghostty-vt build
 - On macOS, [Xcode](https://developer.apple.com/xcode/) (not only Command Line Tools) so GPUI can compile Metal shaders
-- On macOS, [cargo-packager](https://crates.io/crates/cargo-packager) if you want a `.app` / `.dmg` you can put in **Applications** (`cargo install cargo-packager --locked`)
+- [cargo-packager](https://crates.io/crates/cargo-packager) if you want a packaged app (`cargo install cargo-packager --locked`): a `.app` / `.dmg` on macOS, or an NSIS installer on Windows
 
 The repo’s `.cargo/config.toml` sets `DEVELOPER_DIR` to `/Applications/Xcode.app/Contents/Developer` when it is not already set.
 
@@ -55,6 +55,30 @@ That runs `cargo build --release` first (see `before-packaging-command` in `Carg
 ```bash
 cargo install cargo-packager --locked
 ```
+
+## Package (Windows)
+
+This builds a release `Ursa.exe` and wraps it in an [NSIS](https://nsis.sourceforge.io/) installer. Running that setup.exe puts Ursa in Program Files, adds a Start menu shortcut, and uses the Ursa icon from `packaging/AppIcon.ico`.
+
+```bash
+cargo packager --release
+```
+
+That is the same command as on macOS. It runs `cargo build --release` first (`before-packaging-command` in `Cargo.toml`). The default Windows format is NSIS; the setup `.exe` lands under `target/release` (the filename includes the version and architecture). You can also run `target/release/Ursa.exe` without installing.
+
+Install the packager once if you have not already:
+
+```bash
+cargo install cargo-packager --locked
+```
+
+The packager downloads NSIS on first run; you do not need to install NSIS yourself. The Windows SDK (`rc.exe`) is required so `build.rs` can embed `packaging/AppIcon.ico` into `Ursa.exe`. If you change the PNG sources, regenerate the icon from Git Bash (Python and Pillow):
+
+```bash
+./packaging/make-ico.sh
+```
+
+Windows SmartScreen will warn on an unsigned installer. Signing is still on the [Windows roadmap](#windows).
 
 ## Shortcuts
 
@@ -166,8 +190,7 @@ The Settings window writes `config.toml` when you change a value. Editing the co
 
 ### Windows
 
-- [ ] Document and ship an NSIS installer (`cargo packager --release` on Windows)
-- [ ] CI that builds a Windows installer
+- [ ] CI that builds a Windows installer (see [Package (Windows)](#package-windows))
 - [ ] Code-sign the `.exe` so SmartScreen does not warn on first run
 - [ ] Optional `%APPDATA%\Ursa` config location (today `~/.config/ursa`, or `XDG_CONFIG_HOME`)
 - [ ] Fall back to Segoe UI if `.SystemUIFont` does not resolve for chrome
