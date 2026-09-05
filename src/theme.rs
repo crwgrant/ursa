@@ -25,8 +25,8 @@ pub const SIDEBAR_WIDTH: f32 = 220.0;
 pub const TERMINAL_PAD: Pixels = px(8.0);
 
 pub const DEFAULT_THEME: &str = "nord";
-pub const DEFAULT_THEMES_FILE: &str = "themes.toml";
-pub const DEFAULT_THEMES_TOML: &str = include_str!("../themes.toml");
+pub const DEFAULT_THEMES_DIR: &str = "themes";
+pub const DEFAULT_THEMES_FILE: &str = DEFAULT_THEMES_DIR;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Colors {
@@ -62,9 +62,11 @@ pub struct ThemeEntry {
 #[derive(Clone, Debug)]
 pub struct ThemeCatalog {
     pub path: PathBuf,
+    pub extra_dir: PathBuf,
     pub themes: Vec<ThemeEntry>,
     pub error: Option<String>,
     mtime: Option<SystemTime>,
+    source_count: usize,
 }
 
 impl Global for ThemeCatalog {}
@@ -137,31 +139,47 @@ pub fn resolved_path(config_path: &Path, themes_file: &str) -> PathBuf {
     }
 }
 
-pub fn write_default(path: &Path) -> std::io::Result<()> {
-    if path.exists() {
-        return Ok(());
+pub fn extra_themes_dir(config_path: &Path) -> PathBuf {
+    config_path
+        .parent()
+        .map(|dir| dir.join(DEFAULT_THEMES_DIR))
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_THEMES_DIR))
+}
+
+pub fn write_default(config_path: &Path, themes_file: &str) -> std::io::Result<()> {
+    let catalog = resolved_path(config_path, themes_file);
+    let dir = match catalog.extension().and_then(|ext| ext.to_str()) {
+        Some("toml" | "conf") => extra_themes_dir(config_path),
+        _ => catalog,
+    };
+    std::fs::create_dir_all(&dir)?;
+    for (name, contents) in bundled_theme_files() {
+        let path = dir.join(name);
+        if !path.exists() {
+            std::fs::write(path, contents)?;
+        }
     }
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    std::fs::write(path, DEFAULT_THEMES_TOML)
+    Ok(())
 }
 
 pub fn reload(cx: &mut App) {
-    let config = crate::config::current(cx);
-    let path = resolved_path(&crate::config::path(cx), &config.themes_file);
-    cx.set_global(load_catalog(&path));
+    let config_path = crate::config::path(cx);
+    let path = resolved_path(&config_path, &crate::config::current(cx).themes_file);
+    cx.set_global(load_catalog(&path, &config_path));
 }
 
 pub fn reload_if_stale(cx: &mut App) -> bool {
-    let config = crate::config::current(cx);
-    let path = resolved_path(&crate::config::path(cx), &config.themes_file);
-    let mtime = path.metadata().and_then(|meta| meta.modified()).ok();
+    let config_path = crate::config::path(cx);
+    let path = resolved_path(&config_path, &crate::config::current(cx).themes_file);
+    let extra = extra_themes_dir(&config_path);
+    let (mtime, source_count) = sources_stamp(&path, &extra);
     let current = cx.try_global::<ThemeCatalog>();
-    if current.is_some_and(|catalog| catalog.path == path && catalog.mtime == mtime) {
+    if current.is_some_and(|catalog| {
+        catalog.path == path && catalog.extra_dir == extra && catalog.mtime == mtime && catalog.source_count == source_count
+    }) {
         return false;
     }
-    cx.set_global(load_catalog(&path));
+    cx.set_global(load_catalog(&path, &config_path));
     true
 }
 
@@ -194,46 +212,273 @@ pub fn parse(text: &str) -> Result<Vec<ThemeEntry>, String> {
     Ok(themes)
 }
 
-fn load_catalog(path: &Path) -> ThemeCatalog {
-    if path.exists() {
-        match std::fs::read_to_string(path) {
-            Ok(text) => match parse(&text) {
-                Ok(themes) => {
-                    return ThemeCatalog {
-                        path: path.to_path_buf(),
-                        themes,
-                        error: None,
-                        mtime: path.metadata().and_then(|meta| meta.modified()).ok(),
-                    };
+pub fn parse_ghostty(text: &str, id: &str, label: &str) -> Result<ThemeEntry, String> {
+    if is_blank_or_comments(text) {
+        return Err("theme file is empty".into());
+    }
+    let mut background = None;
+    let mut foreground = None;
+    let mut cursor = None;
+    let mut chrome_text = None;
+    let mut text_dim = None;
+    let mut ansi = [None; 16];
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = split_key_value(line) else {
+            continue;
+        };
+        match key {
+            "background" => background = Some(parse_ghostty_color(value, "background")?),
+            "foreground" => foreground = Some(parse_ghostty_color(value, "foreground")?),
+            "cursor-color" => cursor = Some(parse_ghostty_color(value, "cursor-color")?),
+            "text" => chrome_text = Some(parse_ghostty_color(value, "text")?),
+            "text-dim" | "text_dim" => text_dim = Some(parse_ghostty_color(value, "text-dim")?),
+            "palette" => {
+                let Some((index, color)) = split_key_value(value) else {
+                    return Err(format!("invalid palette entry: {value}"));
+                };
+                let index = parse_palette_index(index)?;
+                if index < 16 {
+                    ansi[index] = Some(parse_ghostty_color(color, &format!("palette[{index}]"))?);
                 }
-                Err(error) => {
-                    let mut catalog = embedded_catalog();
-                    catalog.path = path.to_path_buf();
-                    catalog.error = Some(error);
-                    catalog.mtime = path.metadata().and_then(|meta| meta.modified()).ok();
-                    return catalog;
-                }
-            },
-            Err(error) => {
-                let mut catalog = embedded_catalog();
-                catalog.path = path.to_path_buf();
-                catalog.error = Some(error.to_string());
-                return catalog;
             }
+            _ => {}
         }
     }
-    let mut catalog = embedded_catalog();
-    catalog.path = path.to_path_buf();
-    catalog
+    let background = background.ok_or_else(|| "missing background".to_string())?;
+    let foreground = foreground.ok_or_else(|| "missing foreground".to_string())?;
+    let mut palette = fallback_colors().ansi;
+    for (index, color) in ansi.into_iter().enumerate() {
+        if let Some(color) = color {
+            palette[index] = color;
+        }
+    }
+    let id = normalize_id(id);
+    let label = label.trim();
+    let label = if label.is_empty() {
+        display_label(&id)
+    } else {
+        label.to_string()
+    };
+    Ok(ThemeEntry {
+        colors: derive_chrome(background, foreground, cursor.unwrap_or(foreground), palette, chrome_text, text_dim),
+        id,
+        label,
+    })
+}
+
+fn load_catalog(path: &Path, config_path: &Path) -> ThemeCatalog {
+    let extra = extra_themes_dir(config_path);
+    let (mtime, source_count) = sources_stamp(path, &extra);
+    let mut themes = Vec::new();
+    let mut errors = Vec::new();
+
+    if path.is_dir() {
+        load_theme_dir(path, &mut themes, &mut errors);
+        if themes.is_empty() {
+            merge_entries(&mut themes, embedded_themes());
+        }
+    } else if path.exists() {
+        match load_theme_file(path) {
+            Ok(entries) => merge_entries(&mut themes, entries),
+            Err(error) => {
+                errors.push(error);
+                merge_entries(&mut themes, embedded_themes());
+            }
+        }
+    } else {
+        merge_entries(&mut themes, embedded_themes());
+    }
+
+    if extra.exists() && !same_path(path, &extra) {
+        load_theme_dir(&extra, &mut themes, &mut errors);
+    }
+
+    if themes.is_empty() {
+        themes = vec![fallback_entry()];
+    }
+
+    ThemeCatalog {
+        path: path.to_path_buf(),
+        extra_dir: extra,
+        themes,
+        error: join_errors(errors),
+        mtime,
+        source_count,
+    }
 }
 
 fn embedded_catalog() -> ThemeCatalog {
     ThemeCatalog {
         path: PathBuf::from(DEFAULT_THEMES_FILE),
-        themes: parse(DEFAULT_THEMES_TOML).unwrap_or_else(|_| vec![fallback_entry()]),
+        extra_dir: PathBuf::from(DEFAULT_THEMES_DIR),
+        themes: embedded_themes(),
         error: None,
         mtime: None,
+        source_count: 0,
     }
+}
+
+fn bundled_theme_files() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("catppuccin-frappe.conf", include_str!("../themes/catppuccin-frappe.conf")),
+        ("catppuccin-mocha.conf", include_str!("../themes/catppuccin-mocha.conf")),
+        ("gruvbox-dark.conf", include_str!("../themes/gruvbox-dark.conf")),
+        ("nord.conf", include_str!("../themes/nord.conf")),
+        ("one-dark.conf", include_str!("../themes/one-dark.conf")),
+        ("solarized-light.conf", include_str!("../themes/solarized-light.conf")),
+        ("tokyo-night.conf", include_str!("../themes/tokyo-night.conf")),
+    ]
+}
+
+#[cfg(test)]
+fn bundled_theme_text(name: &str) -> &'static str {
+    bundled_theme_files()
+        .iter()
+        .find(|(file, _)| *file == name)
+        .map(|(_, text)| *text)
+        .expect("bundled theme")
+}
+
+fn embedded_themes() -> Vec<ThemeEntry> {
+    let mut themes = Vec::new();
+    for (name, text) in bundled_theme_files() {
+        let id = name.trim_end_matches(".conf");
+        if let Ok(theme) = parse_ghostty(text, id, &display_label(&normalize_id(id))) {
+            themes.push(theme);
+        }
+    }
+    if themes.is_empty() { vec![fallback_entry()] } else { themes }
+}
+
+fn load_theme_dir(dir: &Path, themes: &mut Vec<ThemeEntry>, errors: &mut Vec<String>) {
+    let mut files = match std::fs::read_dir(dir) {
+        Ok(entries) => entries.flatten().map(|entry| entry.path()).collect::<Vec<_>>(),
+        Err(error) => {
+            errors.push(format!("{}: {error}", dir.display()));
+            return;
+        }
+    };
+    files.sort();
+    for path in files {
+        if !is_theme_source(&path) {
+            continue;
+        }
+        match load_theme_file(&path) {
+            Ok(entries) => merge_entries(themes, entries),
+            Err(error) => errors.push(error),
+        }
+    }
+}
+
+fn load_theme_file(path: &Path) -> Result<Vec<ThemeEntry>, String> {
+    let text = std::fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    if is_ghostty_source(path, &text) {
+        let id = id_from_path(path);
+        Ok(vec![
+            parse_ghostty(&text, &id, &label_from_path(path)).map_err(|error| format!("{}: {error}", path.display()))?,
+        ])
+    } else {
+        parse(&text).map_err(|error| format!("{}: {error}", path.display()))
+    }
+}
+
+fn is_theme_source(path: &Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+    if name.starts_with('.') {
+        return false;
+    }
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some("toml" | "conf") => true,
+        Some(_) => false,
+        None => true,
+    }
+}
+
+fn is_ghostty_source(path: &Path, text: &str) -> bool {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some("conf") => true,
+        Some("toml") => false,
+        _ => looks_like_ghostty(text),
+    }
+}
+
+fn looks_like_ghostty(text: &str) -> bool {
+    text.lines().any(|line| {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            return false;
+        }
+        matches!(
+            split_key_value(line).map(|(key, _)| key),
+            Some("palette" | "background" | "foreground" | "cursor-color")
+        )
+    })
+}
+
+fn merge_entries(themes: &mut Vec<ThemeEntry>, incoming: Vec<ThemeEntry>) {
+    for theme in incoming {
+        if let Some(existing) = themes.iter_mut().find(|entry| entry.id == theme.id) {
+            *existing = theme;
+        } else {
+            themes.push(theme);
+        }
+    }
+}
+
+fn sources_stamp(primary: &Path, extra: &Path) -> (Option<SystemTime>, usize) {
+    let mut mtime = None;
+    let mut count = 0;
+    bump_stamp(&mut mtime, &mut count, primary);
+    if extra.exists() && !same_path(primary, extra) {
+        bump_stamp(&mut mtime, &mut count, extra);
+        if let Ok(entries) = std::fs::read_dir(extra) {
+            for path in entries.flatten().map(|entry| entry.path()) {
+                if is_theme_source(&path) {
+                    bump_stamp(&mut mtime, &mut count, &path);
+                }
+            }
+        }
+    } else if primary.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(primary) {
+            for path in entries.flatten().map(|entry| entry.path()) {
+                if is_theme_source(&path) {
+                    bump_stamp(&mut mtime, &mut count, &path);
+                }
+            }
+        }
+    }
+    (mtime, count)
+}
+
+fn bump_stamp(mtime: &mut Option<SystemTime>, count: &mut usize, path: &Path) {
+    if !path.exists() {
+        return;
+    }
+    *count += 1;
+    if let Ok(modified) = path.metadata().and_then(|meta| meta.modified()) {
+        *mtime = Some(mtime.map_or(modified, |current| current.max(modified)));
+    }
+}
+
+fn same_path(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (left.canonicalize(), right.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn join_errors(errors: Vec<String>) -> Option<String> {
+    if errors.is_empty() { None } else { Some(errors.join("; ")) }
 }
 
 fn fallback_entry() -> ThemeEntry {
@@ -266,6 +511,50 @@ fn fallback_colors() -> Colors {
     }
 }
 
+fn derive_chrome(
+    background: u32,
+    foreground: u32,
+    cursor: u32,
+    ansi: [u32; 16],
+    text: Option<u32>,
+    text_dim: Option<u32>,
+) -> Colors {
+    let dark = luminance(background) < 0.5;
+    let toward_fg = if dark { 0xffffff } else { 0x000000 };
+    let toward_bg = if dark { 0x000000 } else { 0xffffff };
+    Colors {
+        window: mix(background, toward_bg, 0.14),
+        sidebar: mix(background, toward_fg, 0.06),
+        sidebar_border: mix(background, toward_fg, 0.18),
+        tab_hover: mix(background, toward_fg, 0.08),
+        tab_active: mix(background, toward_fg, 0.16),
+        accent: ansi[4],
+        text: text.unwrap_or(foreground),
+        text_dim: text_dim.unwrap_or_else(|| mix(foreground, background, 0.28)),
+        cursor,
+        button: mix(background, toward_fg, 0.08),
+        tooltip: mix(background, toward_fg, 0.10),
+        term_fg: foreground,
+        term_bg: background,
+        ansi,
+    }
+}
+
+fn luminance(color: u32) -> f32 {
+    let (red, green, blue) = Colors::rgb_parts(color);
+    (0.2126 * red as f32 + 0.7152 * green as f32 + 0.0722 * blue as f32) / 255.0
+}
+
+fn mix(from: u32, to: u32, amount: f32) -> u32 {
+    let amount = amount.clamp(0.0, 1.0);
+    let (fr, fg, fb) = Colors::rgb_parts(from);
+    let (tr, tg, tb) = Colors::rgb_parts(to);
+    let red = (fr as f32 + (tr as f32 - fr as f32) * amount).round() as u32;
+    let green = (fg as f32 + (tg as f32 - fg as f32) * amount).round() as u32;
+    let blue = (fb as f32 + (tb as f32 - fb as f32) * amount).round() as u32;
+    (red << 16) | (green << 8) | blue
+}
+
 fn display_label(id: &str) -> String {
     id.split('-')
         .filter(|part| !part.is_empty())
@@ -280,11 +569,76 @@ fn display_label(id: &str) -> String {
         .join(" ")
 }
 
+fn id_from_path(path: &Path) -> String {
+    normalize_id(
+        &path
+            .file_stem()
+            .or_else(|| path.file_name())
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+    )
+}
+
+fn label_from_path(path: &Path) -> String {
+    let stem = path
+        .file_stem()
+        .or_else(|| path.file_name())
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let trimmed = stem.trim();
+    if trimmed.chars().any(char::is_whitespace) {
+        trimmed.to_string()
+    } else {
+        display_label(&normalize_id(trimmed))
+    }
+}
+
 fn is_blank_or_comments(text: &str) -> bool {
     text.lines().all(|line| {
         let trimmed = line.trim();
         trimmed.is_empty() || trimmed.starts_with('#')
     })
+}
+
+fn split_key_value(line: &str) -> Option<(&str, &str)> {
+    let (key, value) = line.split_once('=')?;
+    let key = key.trim();
+    let value = value.trim();
+    if key.is_empty() || value.is_empty() {
+        None
+    } else {
+        Some((key, value))
+    }
+}
+
+fn parse_ghostty_color(value: &str, field: &str) -> Result<u32, String> {
+    let token = unquote(value)
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim_matches(|ch| ch == '"' || ch == '\'');
+    parse_hex(token).ok_or_else(|| format!("invalid color for {field}: {value}"))
+}
+
+fn unquote(value: &str) -> &str {
+    let value = value.trim();
+    if value.len() >= 2 {
+        let bytes = value.as_bytes();
+        if (bytes[0] == b'"' && bytes[value.len() - 1] == b'"') || (bytes[0] == b'\'' && bytes[value.len() - 1] == b'\'') {
+            return &value[1..value.len() - 1];
+        }
+    }
+    value
+}
+
+fn parse_palette_index(value: &str) -> Result<usize, String> {
+    let value = value.trim();
+    let parsed = if let Some(hex) = value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")) {
+        usize::from_str_radix(hex, 16)
+    } else {
+        value.parse()
+    };
+    parsed.map_err(|_| format!("invalid palette index: {value}"))
 }
 
 #[derive(Debug, Deserialize)]
@@ -386,16 +740,20 @@ mod tests {
 
     #[test]
     fn default_file_loads_builtin_themes() {
-        let themes = parse(DEFAULT_THEMES_TOML).unwrap();
+        let themes = embedded_themes();
         let ids: Vec<_> = themes.iter().map(|theme| theme.id.as_str()).collect();
         assert!(ids.contains(&"tokyo-night"));
         assert!(ids.contains(&"one-dark"));
         assert!(ids.contains(&"nord"));
+        assert!(ids.contains(&"catppuccin-frappe"));
         let night = themes.iter().find(|theme| theme.id == "tokyo-night").unwrap();
         let nord = themes.iter().find(|theme| theme.id == "nord").unwrap();
         assert_eq!(night.label, "Tokyo Night");
         assert_ne!(night.colors.window, nord.colors.window);
         assert_eq!(night.colors.ansi.len(), 16);
+        assert_eq!(night.colors.term_bg, 0x1a1b26);
+        assert_eq!(nord.colors.term_bg, 0x2e3440);
+        assert_eq!(nord.colors.text_dim, 0xd8dee9);
     }
 
     #[test]
@@ -432,13 +790,80 @@ mod tests {
         let catalog = embedded_catalog();
         assert_eq!(catalog.lookup("nord").window, catalog.lookup("nope").window);
         assert_eq!(normalize_id("One Dark"), "one-dark");
+        assert_eq!(normalize_id("Catppuccin Frappe"), "catppuccin-frappe");
         assert_eq!(normalize_id("  "), DEFAULT_THEME);
     }
 
     #[test]
     fn resolved_path_joins_config_dir() {
         let config = PathBuf::from("/tmp/ghostterm/config.toml");
-        assert_eq!(resolved_path(&config, "themes.toml"), PathBuf::from("/tmp/ghostterm/themes.toml"));
+        assert_eq!(resolved_path(&config, "themes"), PathBuf::from("/tmp/ghostterm/themes"));
         assert_eq!(resolved_path(&config, "/abs/custom.toml"), PathBuf::from("/abs/custom.toml"));
+        assert_eq!(extra_themes_dir(&config), PathBuf::from("/tmp/ghostterm/themes"));
+    }
+
+    #[test]
+    fn parses_ghostty_frappe_and_derives_chrome() {
+        let theme =
+            parse_ghostty(bundled_theme_text("catppuccin-frappe.conf"), "Catppuccin Frappe", "Catppuccin Frappé").unwrap();
+        assert_eq!(theme.id, "catppuccin-frappe");
+        assert_eq!(theme.label, "Catppuccin Frappé");
+        assert_eq!(theme.colors.term_bg, 0x303446);
+        assert_eq!(theme.colors.term_fg, 0xc6d0f5);
+        assert_eq!(theme.colors.cursor, 0xf2d5cf);
+        assert_eq!(theme.colors.ansi[0], 0x51576d);
+        assert_eq!(theme.colors.ansi[4], 0x8caaee);
+        assert_eq!(theme.colors.ansi[15], 0xb5bfe2);
+        assert_eq!(theme.colors.accent, 0x8caaee);
+        assert_eq!(theme.colors.text, 0xc6d0f5);
+        assert_ne!(theme.colors.window, theme.colors.term_bg);
+        assert_ne!(theme.colors.sidebar, theme.colors.term_bg);
+    }
+
+    #[test]
+    fn ghostty_parser_ignores_unknown_keys_and_high_palette() {
+        let theme = parse_ghostty(
+            r##"
+            font-family = "Nope"
+            background = "#112233"
+            foreground = 445566
+            cursor-color = "#778899"
+            palette = 0=#010101
+            palette = 4=#00aaff
+            palette = 8=#334455
+            palette = 16=#ffffff
+            selection-background = #abcdef
+            text-dim = #ccddee
+            "##,
+            "custom",
+            "",
+        )
+        .unwrap();
+        assert_eq!(theme.id, "custom");
+        assert_eq!(theme.label, "Custom");
+        assert_eq!(theme.colors.term_bg, 0x112233);
+        assert_eq!(theme.colors.term_fg, 0x445566);
+        assert_eq!(theme.colors.cursor, 0x778899);
+        assert_eq!(theme.colors.ansi[4], 0x00aaff);
+        assert_eq!(theme.colors.accent, 0x00aaff);
+        assert_eq!(theme.colors.text_dim, 0xccddee);
+    }
+
+    #[test]
+    fn loads_ghostty_conf_from_themes_dir() {
+        let root = std::env::temp_dir().join(format!("ghostterm-theme-loader-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("themes")).unwrap();
+        let config = root.join("config.toml");
+        let catalog_path = root.join("themes");
+        std::fs::write(catalog_path.join("catppuccin-frappe.conf"), bundled_theme_text("catppuccin-frappe.conf")).unwrap();
+        std::fs::write(catalog_path.join("nord.conf"), bundled_theme_text("nord.conf")).unwrap();
+        let catalog = load_catalog(&catalog_path, &config);
+        let ids: Vec<_> = catalog.themes.iter().map(|theme| theme.id.as_str()).collect();
+        assert!(ids.contains(&"nord"));
+        assert!(ids.contains(&"catppuccin-frappe"));
+        let frappe = catalog.themes.iter().find(|theme| theme.id == "catppuccin-frappe").unwrap();
+        assert_eq!(frappe.colors.term_bg, 0x303446);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

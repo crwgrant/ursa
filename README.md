@@ -72,18 +72,20 @@ size = 13
 
 [appearance]
 theme = "nord"
-themes = "themes.toml"
+themes = "themes"
 
 [terminal]
 scrollback_lines = 2000
 cursor = "bar" # or "block"
 ```
 
-`theme` is the name of a table in the themes file. Built-in defaults include `nord`, `one-dark`, `tokyo-night`, `catppuccin-mocha`, `gruvbox-dark`, and `solarized-light`. `themes` is a path to that catalog: relative to `config.toml`, or absolute.
+`theme` is the filename stem of a Ghostty `.conf` in the themes folder (`nord`, `one-dark`, `tokyo-night`, `catppuccin-mocha`, `catppuccin-frappe`, `gruvbox-dark`, `solarized-light`). `themes` is that folder: relative to `config.toml`, or absolute.
 
-The default `themes.toml` is written next to `config.toml` on first launch if it is missing. Add a table per theme (`label`, chrome colors, `term_fg` / `term_bg` / `cursor`, and a 16-color `ansi` array). Colors are `0xRRGGBB` (or `"#rrggbb"`).
+The default `themes/` directory is written next to `config.toml` on first launch. Each file is a Ghostty theme (the format from [ghostty.org](https://ghostty.org/docs/features/theme)): `background`, `foreground`, `cursor-color`, and `palette = 0`–`15`. Ghostterm derives sidebar and tab colors from those values.
 
-The Settings window writes `config.toml` when you change a value. Editing either file by hand reloads within a couple of seconds (or immediately via **Reload**). Invalid TOML keeps the last good settings and shows a toast; a missing file uses the platform defaults. Unknown keys are ignored so older Ghostterm versions stay compatible.
+Optional Ghostterm keys (Ghostty ignores them): `text` (active tab titles) and `text-dim` (SESSIONS, inactive tabs, Settings). If `text-dim` is omitted, it is mixed from `foreground` and `background`. Other unknown keys are ignored, so files from [catppuccin/ghostty](https://github.com/catppuccin/ghostty) or iterm2-color-schemes can be copied in as-is.
+
+The Settings window writes `config.toml` when you change a value. Editing the config or a file in `themes/` reloads within a couple of seconds (or immediately via **Reload**). Invalid TOML keeps the last good settings and shows a toast; a missing file uses the platform defaults. Unknown keys are ignored so older Ghostterm versions stay compatible.
 
 ## Roadmap
 
@@ -112,7 +114,7 @@ The Settings window writes `config.toml` when you change a value. Editing either
 
 ### Rendering
 
-- [ ] Fix Ghostty theme functionality so palette, foreground, background, and cursor colors actually apply
+- [x] Fix Ghostty theme functionality so palette, foreground, background, and cursor colors actually apply
 - [ ] Italic, underline, strikethrough, dim, and fuller 256/truecolor support
 - [ ] Wide glyphs and emoji so the grid and cursor stay aligned
 - [ ] Image protocols (iTerm2 / Kitty) once text rendering is solid

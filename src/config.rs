@@ -121,9 +121,9 @@ family = {family}
 size = {size}
 
 [appearance]
-# Name of a table in the themes file. Built-in defaults include nord, one-dark, and tokyo-night.
+# Filename stem of a .conf in the themes folder (nord, one-dark, tokyo-night, …).
 theme = {theme}
-# Color catalog, relative to this file or an absolute path.
+# Folder of Ghostty theme files, relative to this file or an absolute path.
 themes = {themes}
 
 [terminal]
@@ -209,7 +209,7 @@ pub fn init(cx: &mut App) {
     if let Some(error) = error {
         notify::show(cx, format!("Config file error: {error}"));
     }
-    let _ = theme::write_default(&theme::resolved_path(&path(cx), &current(cx).themes_file));
+    let _ = theme::write_default(&path(cx), &current(cx).themes_file);
     theme::reload(cx);
     start_watcher(cx);
 }
@@ -292,7 +292,7 @@ pub fn ensure_file(cx: &mut App) -> Option<PathBuf> {
             }
         }
     }
-    let _ = theme::write_default(&theme::resolved_path(&path, &current(cx).themes_file));
+    let _ = theme::write_default(&path, &current(cx).themes_file);
     theme::reload(cx);
     Some(path)
 }
@@ -469,7 +469,7 @@ fn persist(cx: &mut App, config: Config, write: bool) {
         match config.save(&path) {
             Ok(saved) => {
                 mtime = saved;
-                let _ = theme::write_default(&theme::resolved_path(&path, &config.themes_file));
+                let _ = theme::write_default(&path, &config.themes_file);
             }
             Err(err) => {
                 error = Some(err.to_string());
