@@ -1,4 +1,5 @@
 use std::{
+    ffi::{OsStr, OsString},
     io::{Read, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -37,6 +38,7 @@ pub fn spawn_shell(
     }
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
+    sanitize_packaged_env(&mut cmd);
     if let Some(path) = login_path() {
         cmd.env("PATH", path);
     }
@@ -112,9 +114,13 @@ fn default_shell(kind: crate::config::WindowsShell) -> ShellLaunch {
     }
 }
 
-fn login_path() -> Option<std::ffi::OsString> {
+fn login_path() -> Option<OsString> {
+    let appdir = packaged_appdir();
     let mut dirs = Vec::new();
     let mut push = |path: PathBuf| {
+        if appdir.as_ref().is_some_and(|appdir| path_is_in_appdir(&path, appdir)) {
+            return;
+        }
         if path.is_dir() && !dirs.iter().any(|existing| existing == &path) {
             dirs.push(path);
         }
@@ -128,6 +134,72 @@ fn login_path() -> Option<std::ffi::OsString> {
         }
     }
     std::env::join_paths(dirs).ok()
+}
+
+/// AppImage AppRun exports PYTHONHOME/PATH/LD_LIBRARY_PATH into the mount.
+/// A login shell must not inherit those, or system Python (and vapoursynth, etc.)
+/// looks inside the AppImage and dies.
+fn sanitize_packaged_env(cmd: &mut CommandBuilder) {
+    let Some(appdir) = packaged_appdir() else {
+        return;
+    };
+    for key in [
+        "APPDIR",
+        "APPIMAGE",
+        "APPIMAGE_EXTRACTED_ROOT",
+        "APPIMAGE_SILENT_INSTALL",
+        "ARGV0",
+        "OWD",
+    ] {
+        cmd.env_remove(key);
+    }
+    for (key, value) in std::env::vars_os() {
+        if let Some(cleaned) = filter_appdir_from_search_path(&value, &appdir) {
+            if cleaned.is_empty() {
+                cmd.env_remove(&key);
+            } else {
+                cmd.env(key, cleaned);
+            }
+        }
+    }
+}
+
+fn packaged_appdir() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("APPDIR").filter(|dir| !dir.is_empty()) {
+        let dir = PathBuf::from(dir);
+        if dir != Path::new("/") {
+            return Some(dir);
+        }
+    }
+    std::env::current_exe().ok().and_then(|exe| appdir_from_exe(&exe).map(Path::to_path_buf))
+}
+
+fn appdir_from_exe(exe: &Path) -> Option<&Path> {
+    exe.ancestors().find(|path| {
+        path.file_name()
+            .and_then(OsStr::to_str)
+            .is_some_and(|name| name.starts_with(".mount_"))
+    })
+}
+
+fn path_is_in_appdir(path: &Path, appdir: &Path) -> bool {
+    path == appdir || path.starts_with(appdir)
+}
+
+fn filter_appdir_from_search_path(value: &OsStr, appdir: &Path) -> Option<OsString> {
+    let paths: Vec<PathBuf> = std::env::split_paths(value).collect();
+    if paths.is_empty() {
+        return None;
+    }
+    let kept: Vec<PathBuf> = paths.iter().filter(|path| !path_is_in_appdir(path, appdir)).cloned().collect();
+    if kept.len() == paths.len() {
+        return None;
+    }
+    let kept: Vec<PathBuf> = kept.into_iter().filter(|path| !path.as_os_str().is_empty()).collect();
+    if kept.is_empty() {
+        return Some(OsString::new());
+    }
+    std::env::join_paths(kept).ok()
 }
 
 fn login_path_dirs() -> Vec<PathBuf> {
@@ -308,6 +380,11 @@ pub fn write_pty(writer: &Mutex<Box<dyn Write + Send>>, data: &[u8]) {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        ffi::OsString,
+        path::{Path, PathBuf},
+    };
+
     use super::login_path_dirs;
 
     #[test]
@@ -320,6 +397,41 @@ mod tests {
         {
             assert!(dirs.iter().any(|path| path.ends_with("opt/homebrew/bin")));
         }
+    }
+
+    #[test]
+    fn appdir_from_exe_uses_appimage_mount() {
+        let exe = Path::new("/tmp/.mount_Ursa_0DdPgJL/usr/bin/Ursa");
+        assert_eq!(super::appdir_from_exe(exe), Some(Path::new("/tmp/.mount_Ursa_0DdPgJL")));
+        assert_eq!(super::appdir_from_exe(Path::new("/usr/bin/Ursa")), None);
+    }
+
+    #[test]
+    fn filter_appdir_drops_python_home_and_keeps_system_path() {
+        let appdir = Path::new("/tmp/.mount_Ursa_0DdPgJL");
+        let python_home = OsString::from("/tmp/.mount_Ursa_0DdPgJL/usr/");
+        assert_eq!(
+            super::filter_appdir_from_search_path(&python_home, appdir).as_deref(),
+            Some(std::ffi::OsStr::new(""))
+        );
+        let python_path = OsString::from("/tmp/.mount_Ursa_0DdPgJL/usr/share/pyshared/:");
+        assert_eq!(
+            super::filter_appdir_from_search_path(&python_path, appdir).as_deref(),
+            Some(std::ffi::OsStr::new(""))
+        );
+        let path = std::env::join_paths([
+            PathBuf::from("/tmp/.mount_Ursa_0DdPgJL/usr/bin"),
+            PathBuf::from("/usr/bin"),
+            PathBuf::from("/usr/local/bin"),
+        ])
+        .unwrap();
+        let cleaned = super::filter_appdir_from_search_path(&path, appdir).expect("appdir entries removed");
+        let kept: Vec<PathBuf> = std::env::split_paths(&cleaned).collect();
+        assert_eq!(kept, vec![PathBuf::from("/usr/bin"), PathBuf::from("/usr/local/bin")]);
+        assert_eq!(
+            super::filter_appdir_from_search_path(OsString::from("/usr/bin").as_os_str(), appdir),
+            None
+        );
     }
 }
 
