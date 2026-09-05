@@ -22,6 +22,9 @@ pub const UI_FONT_FAMILY: &str = ".SystemUIFont";
 pub const FONT_SIZE: f32 = 13.0;
 pub const LINE_HEIGHT: f32 = 1.35;
 pub const SIDEBAR_WIDTH: f32 = 220.0;
+pub const SIDEBAR_MIN_WIDTH: f32 = 140.0;
+pub const SIDEBAR_MAX_WIDTH: f32 = 420.0;
+pub const TERMINAL_MIN_WIDTH: f32 = 320.0;
 pub const TERMINAL_PAD: Pixels = px(8.0);
 
 pub const DEFAULT_THEME: &str = "nord";

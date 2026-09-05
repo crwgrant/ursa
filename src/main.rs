@@ -10,8 +10,9 @@ mod settings;
 mod theme;
 
 use gpui::{
-    AnyView, App, Application, Bounds, Context, KeyBinding, Menu, MenuItem, MouseButton, SharedString, TitlebarOptions, Window,
-    WindowBounds, WindowOptions, actions, div, point, prelude::*, px, rgb, size,
+    AnyView, App, Application, Bounds, Context, CursorStyle, DragMoveEvent, KeyBinding, Menu, MenuItem, MouseButton,
+    MouseDownEvent, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, point, prelude::*, px, rgb,
+    size,
 };
 use session::{Session, SessionEvent};
 
@@ -25,6 +26,19 @@ const NEW_WINDOW_OFFSET: f32 = 28.0;
 struct Workspace {
     tabs: Vec<gpui::Entity<Session>>,
     active: usize,
+    sidebar_width: f32,
+    sidebar_split_locked: bool,
+}
+
+#[derive(Clone)]
+struct SidebarSplit;
+
+struct SplitDragPreview;
+
+impl Render for SplitDragPreview {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
 }
 
 impl Workspace {
@@ -33,6 +47,8 @@ impl Workspace {
         let workspace = Self {
             tabs: vec![first],
             active: 0,
+            sidebar_width: config::restored_sidebar_width(),
+            sidebar_split_locked: false,
         };
         workspace.subscribe_session(0, window, cx);
         cx.observe_global::<notify::Notifications>(|_, cx| cx.notify()).detach();
@@ -142,6 +158,31 @@ impl Workspace {
             tab.update(cx, |session, cx| session.apply_config(cx));
         }
     }
+
+    fn set_sidebar_width(&mut self, width: f32, window: &Window, persist: bool, cx: &mut Context<Self>) {
+        let width = config::clamp_sidebar_width(width, f32::from(window.viewport_size().width));
+        if (self.sidebar_width - width).abs() < 0.5 {
+            if persist {
+                config::save_sidebar_width(self.sidebar_width);
+            }
+            return;
+        }
+        self.sidebar_width = width;
+        if persist {
+            config::save_sidebar_width(width);
+        }
+        cx.notify();
+    }
+
+    fn reset_sidebar_width(&mut self, window: &Window, cx: &mut Context<Self>) {
+        self.sidebar_split_locked = true;
+        self.set_sidebar_width(theme::SIDEBAR_WIDTH, window, true, cx);
+    }
+
+    fn finish_sidebar_resize(&mut self, window: &Window, cx: &mut Context<Self>) {
+        self.sidebar_split_locked = false;
+        self.set_sidebar_width(self.sidebar_width, window, true, cx);
+    }
 }
 
 impl Render for Workspace {
@@ -176,6 +217,7 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &ClearScreen, _window, cx| this.clear_active(cx)))
             .on_action(|_: &OpenSettings, _window, cx| crate::settings::open(cx))
             .child(self.render_sidebar(&tabs, cx))
+            .child(self.render_split(cx))
             .child(self.render_terminal())
             .child(notify::overlay(cx))
     }
@@ -185,11 +227,9 @@ impl Workspace {
     fn render_sidebar(&self, tabs: &[(usize, SharedString, bool)], cx: &mut Context<Self>) -> impl IntoElement {
         let colors = theme::colors(cx);
         div()
-            .w(px(theme::SIDEBAR_WIDTH))
+            .w(px(self.sidebar_width))
             .h_full()
             .bg(rgb(colors.sidebar))
-            .border_r_1()
-            .border_color(rgb(colors.sidebar_border))
             .flex()
             .flex_col()
             .child(
@@ -227,6 +267,57 @@ impl Workspace {
 
     fn render_terminal(&self) -> impl IntoElement {
         div().flex_1().h_full().min_w_0().child(self.tabs[self.active].clone())
+    }
+
+    fn render_split(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = theme::colors(cx);
+        div()
+            .relative()
+            .w(px(1.0))
+            .h_full()
+            .flex_shrink_0()
+            .bg(rgb(colors.sidebar_border))
+            .child(
+                div()
+                    .id("sidebar-split")
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .left(px(-3.0))
+                    .w(px(7.0))
+                    .cursor(CursorStyle::ResizeColumn)
+                    .hover(move |style| style.bg(rgb(colors.accent)))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                            cx.stop_propagation();
+                            if event.click_count >= 2 {
+                                this.reset_sidebar_width(window, cx);
+                            } else {
+                                this.sidebar_split_locked = false;
+                            }
+                        }),
+                    )
+                    .on_drag(SidebarSplit, |_, _, _, cx| cx.new(|_| SplitDragPreview))
+                    .on_drag_move(cx.listener(|this, event: &DragMoveEvent<SidebarSplit>, window, cx| {
+                        if this.sidebar_split_locked {
+                            return;
+                        }
+                        this.set_sidebar_width(f32::from(event.event.position.x), window, false, cx);
+                    }))
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(|this, _, window, cx| {
+                            this.finish_sidebar_resize(window, cx);
+                        }),
+                    )
+                    .on_mouse_up_out(
+                        MouseButton::Left,
+                        cx.listener(|this, _, window, cx| {
+                            this.finish_sidebar_resize(window, cx);
+                        }),
+                    ),
+            )
     }
 }
 
@@ -488,6 +579,17 @@ fn open_workspace_window(cx: &mut App) {
         });
         cx.new(|cx| Workspace::new(window, cx))
     });
+}
+
+pub(crate) fn reset_workspace_sidebars(cx: &mut App) {
+    for handle in cx.windows() {
+        let Some(workspace) = handle.downcast::<Workspace>() else {
+            continue;
+        };
+        let _ = workspace.update(cx, |this, window, cx| {
+            this.reset_sidebar_width(window, cx);
+        });
+    }
 }
 
 fn save_workspace_windows(cx: &mut App) {

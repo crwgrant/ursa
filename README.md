@@ -4,7 +4,7 @@ A terminal emulator built in Rust with [GPUI](https://github.com/zed-industries/
 
 ## Features
 
-- Tabbed sessions in a left sidebar: add with **⌘T** or the **+** button, close with **⌘W** or **×**
+- Tabbed sessions in a left sidebar: add with **⌘T** or the **+** button, close with **⌘W** or **×**; drag the right edge to resize, double-click to reset
 - Mouse selection: click-drag, double-click a word, triple-click a line, Option-drag for a block
 - Line and word movement: **⌘← / ⌘→** jump to the start or end of the line; **⌥← / ⌥→** move by word
 - Delete by word and line: **⌥⌫** / **⌥⌦** kill the previous or next word; **⌘⌫** / **⌘⌦** kill to the start or end of the line
@@ -65,7 +65,7 @@ Ghostterm reads a TOML file it owns (not libghostty). The file is created the fi
 
 If `XDG_CONFIG_HOME` is set, that directory is used instead of `~/.config`. An existing folder at the previous locations (`~/Library/Application Support/Ghostterm` on macOS, `%APPDATA%\Ghostterm` on Windows) is still used until you move it.
 
-Window position, size, and which monitor it was on are stored separately in `window.toml` in the same folder, so moving or resizing the app does not rewrite `config.toml`. Extra windows opened with ⌘N are offset from that saved frame. If that monitor is unplugged, the window is centered on the current screen.
+Window position, size, which monitor it was on, and the sidebar split width are stored separately in `window.toml` in the same folder, so moving or resizing the app does not rewrite `config.toml`. Extra windows opened with ⌘N are offset from that saved frame. If that monitor is unplugged, the window is centered on the current screen. Drag the border between the sessions list and the terminal to resize; double-click it or use **Reset to Defaults** in Settings to restore the 220px width.
 
 ```toml
 [font]
@@ -110,7 +110,7 @@ The Settings window writes `config.toml` when you change a value. Editing the co
 - [x] New window (⌘N), including reopen from the Dock when no windows are open
 - [ ] Horizontal tabs for each session
 - [x] Remember window position and size across launches
-- [ ] Draggable split to resize the tab sidebar vs the terminal
+- [x] Draggable split to resize the tab sidebar vs the terminal
 - [ ] Drag to reorder tabs in the sidebar
 - [ ] Rename tabs
 - [ ] Option to keep a tab open after the shell exits

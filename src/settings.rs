@@ -300,6 +300,7 @@ impl Render for SettingsPage {
                     )
                     .child(text_button("reset-config", "Reset to Defaults", colors, |cx| {
                         config::reset(cx);
+                        crate::reset_workspace_sidebars(cx);
                         notify::show(cx, "Settings reset");
                     })),
             )

@@ -271,7 +271,7 @@ impl Session {
 
     fn handle_mouse_move(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
         self.update_link_hover(event.position, event.modifiers.platform, cx);
-        if !self.selecting && !event.dragging() {
+        if !self.selecting {
             return;
         }
         if let Some(pointer) = self.pointer_at(event.position) {
