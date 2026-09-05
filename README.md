@@ -81,7 +81,9 @@ cursor = "bar" # or "block"
 
 `theme` is the filename stem of a Ghostty `.conf` in the themes folder (`nord`, `one-dark`, `tokyo-night`, `catppuccin-mocha`, `catppuccin-frappe`, `gruvbox-dark`, `solarized-light`). `themes` is that folder: relative to `config.toml`, or absolute.
 
-The default `themes/` directory is written next to `config.toml` on first launch. Each file is a Ghostty theme (the format from [ghostty.org](https://ghostty.org/docs/features/theme)): `background`, `foreground`, `cursor-color`, and `palette = 0`–`15`. Ghostterm derives sidebar and tab colors from those values. Unknown keys are ignored, so files from [catppuccin/ghostty](https://github.com/catppuccin/ghostty) or iterm2-color-schemes can be copied in as-is.
+The default `themes/` directory is written next to `config.toml` on first launch. Each file is a Ghostty theme (the format from [ghostty.org](https://ghostty.org/docs/features/theme)): `background`, `foreground`, `cursor-color`, and `palette = 0`–`15`. Ghostterm derives sidebar and tab colors from those values.
+
+Optional Ghostterm keys (Ghostty ignores them): `text` (active tab titles) and `text-dim` (SESSIONS, inactive tabs, Settings). If `text-dim` is omitted, it is mixed from `foreground` and `background`. Other unknown keys are ignored, so files from [catppuccin/ghostty](https://github.com/catppuccin/ghostty) or iterm2-color-schemes can be copied in as-is.
 
 The Settings window writes `config.toml` when you change a value. Editing the config or a file in `themes/` reloads within a couple of seconds (or immediately via **Reload**). Invalid TOML keeps the last good settings and shows a toast; a missing file uses the platform defaults. Unknown keys are ignored so older Ghostterm versions stay compatible.
 

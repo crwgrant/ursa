@@ -219,6 +219,8 @@ pub fn parse_ghostty(text: &str, id: &str, label: &str) -> Result<ThemeEntry, St
     let mut background = None;
     let mut foreground = None;
     let mut cursor = None;
+    let mut chrome_text = None;
+    let mut text_dim = None;
     let mut ansi = [None; 16];
     for raw in text.lines() {
         let line = raw.trim();
@@ -232,6 +234,8 @@ pub fn parse_ghostty(text: &str, id: &str, label: &str) -> Result<ThemeEntry, St
             "background" => background = Some(parse_ghostty_color(value, "background")?),
             "foreground" => foreground = Some(parse_ghostty_color(value, "foreground")?),
             "cursor-color" => cursor = Some(parse_ghostty_color(value, "cursor-color")?),
+            "text" => chrome_text = Some(parse_ghostty_color(value, "text")?),
+            "text-dim" | "text_dim" => text_dim = Some(parse_ghostty_color(value, "text-dim")?),
             "palette" => {
                 let Some((index, color)) = split_key_value(value) else {
                     return Err(format!("invalid palette entry: {value}"));
@@ -260,7 +264,7 @@ pub fn parse_ghostty(text: &str, id: &str, label: &str) -> Result<ThemeEntry, St
         label.to_string()
     };
     Ok(ThemeEntry {
-        colors: derive_chrome(background, foreground, cursor.unwrap_or(foreground), palette),
+        colors: derive_chrome(background, foreground, cursor.unwrap_or(foreground), palette, chrome_text, text_dim),
         id,
         label,
     })
@@ -507,15 +511,17 @@ fn fallback_colors() -> Colors {
     }
 }
 
-fn derive_chrome(background: u32, foreground: u32, cursor: u32, ansi: [u32; 16]) -> Colors {
+fn derive_chrome(
+    background: u32,
+    foreground: u32,
+    cursor: u32,
+    ansi: [u32; 16],
+    text: Option<u32>,
+    text_dim: Option<u32>,
+) -> Colors {
     let dark = luminance(background) < 0.5;
     let toward_fg = if dark { 0xffffff } else { 0x000000 };
     let toward_bg = if dark { 0x000000 } else { 0xffffff };
-    let text_dim = if color_distance(ansi[8], background) > 12.0 {
-        ansi[8]
-    } else {
-        mix(foreground, background, 0.45)
-    };
     Colors {
         window: mix(background, toward_bg, 0.14),
         sidebar: mix(background, toward_fg, 0.06),
@@ -523,8 +529,8 @@ fn derive_chrome(background: u32, foreground: u32, cursor: u32, ansi: [u32; 16])
         tab_hover: mix(background, toward_fg, 0.08),
         tab_active: mix(background, toward_fg, 0.16),
         accent: ansi[4],
-        text: foreground,
-        text_dim,
+        text: text.unwrap_or(foreground),
+        text_dim: text_dim.unwrap_or_else(|| mix(foreground, background, 0.28)),
         cursor,
         button: mix(background, toward_fg, 0.08),
         tooltip: mix(background, toward_fg, 0.10),
@@ -547,15 +553,6 @@ fn mix(from: u32, to: u32, amount: f32) -> u32 {
     let green = (fg as f32 + (tg as f32 - fg as f32) * amount).round() as u32;
     let blue = (fb as f32 + (tb as f32 - fb as f32) * amount).round() as u32;
     (red << 16) | (green << 8) | blue
-}
-
-fn color_distance(left: u32, right: u32) -> f32 {
-    let (lr, lg, lb) = Colors::rgb_parts(left);
-    let (rr, rg, rb) = Colors::rgb_parts(right);
-    let dr = lr as f32 - rr as f32;
-    let dg = lg as f32 - rg as f32;
-    let db = lb as f32 - rb as f32;
-    (dr * dr + dg * dg + db * db).sqrt()
 }
 
 fn display_label(id: &str) -> String {
@@ -756,6 +753,7 @@ mod tests {
         assert_eq!(night.colors.ansi.len(), 16);
         assert_eq!(night.colors.term_bg, 0x1a1b26);
         assert_eq!(nord.colors.term_bg, 0x2e3440);
+        assert_eq!(nord.colors.text_dim, 0xd8dee9);
     }
 
     #[test]
@@ -835,6 +833,7 @@ mod tests {
             palette = 8=#334455
             palette = 16=#ffffff
             selection-background = #abcdef
+            text-dim = #ccddee
             "##,
             "custom",
             "",
@@ -847,6 +846,7 @@ mod tests {
         assert_eq!(theme.colors.cursor, 0x778899);
         assert_eq!(theme.colors.ansi[4], 0x00aaff);
         assert_eq!(theme.colors.accent, 0x00aaff);
+        assert_eq!(theme.colors.text_dim, 0xccddee);
     }
 
     #[test]
