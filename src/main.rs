@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod about;
 mod config;
 mod cwd;
 mod frame;
@@ -34,6 +35,7 @@ actions!(
         Paste,
         ClearScreen,
         OpenSettings,
+        OpenAbout,
         SplitRight,
         SplitDown,
         FocusNextPane,
@@ -1112,6 +1114,7 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &FocusNextPane, window, cx| this.focus_offset(1, window, cx)))
             .on_action(cx.listener(|this, _: &FocusPrevPane, window, cx| this.focus_offset(-1, window, cx)))
             .on_action(|_: &OpenSettings, _window, cx| crate::settings::open(cx))
+            .on_action(|_: &OpenAbout, _window, cx| crate::about::open(cx))
             .when(config::sessions_enabled(cx), |workspace| {
                 workspace.child(self.render_sidebar(&tabs, cx)).child(self.render_split(cx))
             })
@@ -1888,6 +1891,8 @@ fn app_menus(sessions_enabled: bool) -> Vec<Menu> {
         Menu {
             name: "Ursa".into(),
             items: vec![
+                MenuItem::action("About Ursa", OpenAbout),
+                MenuItem::separator(),
                 MenuItem::action("Settings…", OpenSettings),
                 MenuItem::separator(),
                 MenuItem::action("Quit Ursa", Quit),
@@ -1967,6 +1972,7 @@ fn main() {
             open_workspace_window(cx);
         });
         cx.on_action(|_: &OpenSettings, cx| settings::open(cx));
+        cx.on_action(|_: &OpenAbout, cx| about::open(cx));
         cx.bind_keys(workspace_key_bindings());
         apply_app_menus(cx);
         cx.set_dock_menu(vec![MenuItem::action("New Window", NewWindow)]);

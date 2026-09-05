@@ -18,6 +18,7 @@ A native terminal with a reliable bearing, built in Rust with [GPUI](https://git
 - In-app toasts for copy and paste feedback (bottom-right, click or wait to dismiss)
 - **⌘K** clears the screen and scrollback; the shell redraws the prompt at the top
 - Settings window (**⌘,** or **Ursa → Settings**) for theme, font family, size, cursor style, scrollback, session restore, and the session sidebar; values are stored in an Ursa-owned config file you can also edit by hand
+- About window (**Ursa → About Ursa**) with the version, app icon, and a link to the GitHub repository
 - **Settings → Session sidebar → Off** hides the sessions list and session shortcuts; only horizontal tabs remain. **Keep sessions** still restores that one session’s tabs and panes
 - **Settings → Sessions → Keep sessions** restores sessions, tabs, split panes, working directories, and on-screen text on reopen, and keeps a tab open if its shell exits. **Close sessions** starts fresh and does not save previous sessions
 - New window with **⌘N** or **File → New Window**; closing the last session leaves the app running so a Dock click (or ⌘N) can open another
