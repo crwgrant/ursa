@@ -98,7 +98,7 @@ Install the packager once if you have not already:
 cargo install cargo-packager --locked
 ```
 
-The `.desktop` file uses `Categories=System;TerminalEmulator;` so KDE puts Ursa with other terminals instead of **Lost & Found**.
+The `.desktop` file uses `Categories=System;TerminalEmulator;` so KDE puts Ursa with other terminals instead of **Lost & Found**. `X-AppImage-Version` is the Cargo package version so [Shelly](https://www.seafoam-labs.org/shelly-alpm/) can show it instead of Unknown. Update that key when you bump `version` in `Cargo.toml`.
 
 cargo-packager only uses **PNG** icons on Linux (it skips `.icns` and `.ico`). If you change the PNG sources, regenerate the freedesktop sizes (Python and Pillow; on Arch, `pacman -S python-pillow`):
 

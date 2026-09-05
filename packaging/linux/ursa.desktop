@@ -8,6 +8,7 @@ Icon={{icon}}
 Name={{name}}
 Terminal=false
 Type=Application
+X-AppImage-Version=0.4.0
 {{#if mime_type}}
 MimeType={{mime_type}}
 {{/if}}

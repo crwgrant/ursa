@@ -171,6 +171,16 @@ mod tests {
     }
 
     #[test]
+    fn linux_desktop_appimage_version_matches_cargo() {
+        let desktop = include_str!("../packaging/linux/ursa.desktop");
+        let expected = format!("X-AppImage-Version={VERSION}");
+        assert!(
+            desktop.lines().any(|line| line == expected),
+            "Shelly reads X-AppImage-Version from the desktop file; keep it in sync with Cargo.toml"
+        );
+    }
+
+    #[test]
     fn github_link_is_the_repo() {
         assert_eq!(GITHUB_URL, "https://github.com/crwgrant/ursa");
         assert_eq!(github_label(), "github.com/crwgrant/ursa");
