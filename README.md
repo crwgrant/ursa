@@ -137,7 +137,7 @@ The Settings window writes `config.toml` when you change a value. Editing the co
 
 - [x] Fix Ghostty theme functionality so palette, foreground, background, and cursor colors actually apply
 - [ ] Italic, underline, strikethrough, dim, and fuller 256/truecolor support
-- [ ] Wide glyphs and emoji so the grid and cursor stay aligned
+- [x] Wide glyphs and emoji so the grid and cursor stay aligned
 - [ ] Image protocols (iTerm2 / Kitty) once text rendering is solid
 
 ### Config
@@ -210,6 +210,7 @@ Config parse/round-trip tests live in `src/config.rs` (`cargo test`). A broader 
 - Copy/paste once clipboard is wired
 - Scrollback bounds and clear-screen (⌘K)
 - Theme: palette, foreground, background, and cursor actually change
+- Wide glyphs and emoji occupy two columns; the cursor covers the whole cluster; spacers are not painted
 
 ### Settings
 

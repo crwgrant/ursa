@@ -1,13 +1,14 @@
 use std::path::PathBuf;
 
 use gpui::{
-    Bounds, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Hsla, Pixels, Point, SharedString, TextRun, UnderlineStyle,
-    Window, fill, point, px, rgb, size,
+    Bounds, ContentMask, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Hsla, Pixels, Point, SharedString, TextRun,
+    UnderlineStyle, Window, fill, point, px, rgb, size,
 };
 use libghostty_vt::{
     Terminal,
     error::Error,
     render::{CellIterator, RenderState, RowIterator},
+    screen::CellWide,
     style::RgbColor,
     terminal::{Point as TermPoint, PointCoordinate},
 };
@@ -37,6 +38,10 @@ pub struct FrameSpan {
     pub bg: Option<Rgb>,
     pub bold: bool,
     pub link: Option<String>,
+    /// Byte length of each grapheme cluster in `text`.
+    cluster_bytes: Vec<u16>,
+    /// Grid columns occupied by each cluster. Sum equals `columns` for text spans.
+    cluster_cols: Vec<u16>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -124,6 +129,15 @@ pub fn capture<'alloc>(
         let mut col = 0u16;
 
         while let Some(cell) = cell_iter.next() {
+            let wide = cell
+                .raw_cell()
+                .ok()
+                .and_then(|raw| raw.wide().ok())
+                .unwrap_or(CellWide::Narrow);
+            let Some(columns) = display_columns(wide) else {
+                continue;
+            };
+
             let graphemes = cell.graphemes_len()?;
             let mut fg = cell.fg_color()?.unwrap_or(colors.foreground);
             let mut bg = cell.bg_color()?;
@@ -150,34 +164,22 @@ pub fn capture<'alloc>(
 
             if graphemes == 0 {
                 flush_span(&mut spans, &mut current);
-                spans.push(FrameSpan {
-                    text: String::new(),
-                    columns: 1,
-                    fg: Rgb::from_ghostty(fg),
-                    bg: bg.map(Rgb::from_ghostty),
-                    bold,
-                    link,
-                });
-                col = col.saturating_add(1);
+                spans.push(empty_span(columns, fg, bg, bold, link));
+                col = col.saturating_add(columns);
                 continue;
             }
 
             text.clear();
             cell.graphemes_utf8(&mut text)?;
 
-            let next = FrameSpan {
-                text: text.clone(),
-                columns: 1,
-                fg: Rgb::from_ghostty(fg),
-                bg: bg.map(Rgb::from_ghostty),
-                bold,
-                link,
-            };
+            let next = text_span(text.clone(), columns, fg, bg, bold, link);
 
             match current.as_mut() {
-                Some(span) if span.fg == next.fg && span.bg == next.bg && span.bold == next.bold && span.link == next.link => {
+                Some(span) if can_merge(span, &next) => {
                     span.text.push_str(&next.text);
-                    span.columns += 1;
+                    span.columns = span.columns.saturating_add(next.columns);
+                    span.cluster_bytes.extend_from_slice(&next.cluster_bytes);
+                    span.cluster_cols.extend_from_slice(&next.cluster_cols);
                 }
                 Some(_) => {
                     flush_span(&mut spans, &mut current);
@@ -185,7 +187,7 @@ pub fn capture<'alloc>(
                 }
                 None => current = Some(next),
             }
-            col = col.saturating_add(1);
+            col = col.saturating_add(columns);
         }
 
         flush_span(&mut spans, &mut current);
@@ -212,6 +214,97 @@ fn flush_span(spans: &mut Vec<FrameSpan>, current: &mut Option<FrameSpan>) {
     if let Some(span) = current.take() {
         spans.push(span);
     }
+}
+
+fn display_columns(wide: CellWide) -> Option<u16> {
+    match wide {
+        CellWide::Narrow => Some(1),
+        CellWide::Wide => Some(2),
+        CellWide::SpacerTail | CellWide::SpacerHead => None,
+    }
+}
+
+fn empty_span(columns: u16, fg: RgbColor, bg: Option<RgbColor>, bold: bool, link: Option<String>) -> FrameSpan {
+    FrameSpan {
+        text: String::new(),
+        columns,
+        fg: Rgb::from_ghostty(fg),
+        bg: bg.map(Rgb::from_ghostty),
+        bold,
+        link,
+        cluster_bytes: Vec::new(),
+        cluster_cols: Vec::new(),
+    }
+}
+
+fn text_span(text: String, columns: u16, fg: RgbColor, bg: Option<RgbColor>, bold: bool, link: Option<String>) -> FrameSpan {
+    let bytes = text.len() as u16;
+    FrameSpan {
+        text,
+        columns,
+        fg: Rgb::from_ghostty(fg),
+        bg: bg.map(Rgb::from_ghostty),
+        bold,
+        link,
+        cluster_bytes: vec![bytes],
+        cluster_cols: vec![columns],
+    }
+}
+
+fn can_merge(current: &FrameSpan, next: &FrameSpan) -> bool {
+    next.columns == 1
+        && current.cluster_cols.iter().all(|&width| width == 1)
+        && current.fg == next.fg
+        && current.bg == next.bg
+        && current.bold == next.bold
+        && current.link == next.link
+}
+
+fn span_clusters(span: &FrameSpan) -> Vec<(&str, u16)> {
+    let mut clusters = Vec::with_capacity(span.cluster_cols.len());
+    let mut offset = 0usize;
+    for (&bytes, &cols) in span.cluster_bytes.iter().zip(&span.cluster_cols) {
+        let next = offset.saturating_add(bytes as usize);
+        if next <= span.text.len() && offset <= next {
+            clusters.push((&span.text[offset..next], cols));
+        }
+        offset = next;
+    }
+    if clusters.is_empty() && !span.text.is_empty() {
+        clusters.push((span.text.as_str(), span.columns.max(1)));
+    }
+    clusters
+}
+
+fn text_for_column_range(span: &FrameSpan, rel_start: u16, rel_end: u16) -> String {
+    let mut col = 0u16;
+    let mut out = String::new();
+    for (text, width) in span_clusters(span) {
+        let next = col.saturating_add(width);
+        if next > rel_start && col < rel_end {
+            out.push_str(text);
+        }
+        col = next;
+    }
+    out
+}
+
+fn is_wide_glyph(span: &FrameSpan) -> bool {
+    !span.text.is_empty() && span.cluster_cols.iter().any(|&width| width > 1)
+}
+
+fn cursor_cover(frame: &Frame) -> Option<(u16, u16, u16)> {
+    let cursor = frame.cursor?;
+    let row = frame.rows.get(cursor.y as usize)?;
+    let mut col = 0u16;
+    for span in &row.spans {
+        let end = col.saturating_add(span.columns);
+        if cursor.x >= col && cursor.x < end {
+            return Some((col, cursor.y, span.columns.max(1)));
+        }
+        col = end;
+    }
+    Some((cursor.x, cursor.y, 1))
 }
 
 fn hyperlink_uri(
@@ -264,7 +357,7 @@ fn hyperlink_at_cell(frame: &Frame, row: usize, col: u16) -> Option<String> {
     None
 }
 
-fn paragraph_at(frame: &Frame, row: usize, col: u16) -> Option<(String, Vec<(usize, u16)>, usize)> {
+fn paragraph_at(frame: &Frame, row: usize, col: u16) -> Option<(String, Vec<(usize, u16, u16, usize)>, usize)> {
     if row >= frame.rows.len() {
         return None;
     }
@@ -283,14 +376,14 @@ fn paragraph_at(frame: &Frame, row: usize, col: u16) -> Option<(String, Vec<(usi
                 continue;
             }
             let mut local = 0u16;
-            for ch in span.text.chars() {
+            for (cluster, width) in span_clusters(span) {
                 let cell_col = x.saturating_add(local);
-                if r == row && col == cell_col && click_at.is_none() {
+                if r == row && col >= cell_col && col < cell_col.saturating_add(width) && click_at.is_none() {
                     click_at = Some(text.len());
                 }
-                text.push(ch);
-                cells.push((r, cell_col));
-                local = local.saturating_add(1);
+                text.push_str(cluster);
+                cells.push((r, cell_col, width, cluster.len()));
+                local = local.saturating_add(width);
             }
             if r == row && click_at.is_none() && col >= x && col < x.saturating_add(span.columns) {
                 click_at = Some(text.len().saturating_sub(1));
@@ -354,19 +447,30 @@ fn regex_hit(frame: &Frame, row: usize, col: u16) -> Option<LinkHit> {
     None
 }
 
-fn hit_from_span(text: &str, cells: &[(usize, u16)], start: usize, end: usize, action: LinkAction) -> Option<LinkHit> {
-    let start_char = text[..start].chars().count();
-    let end_char = text[..end].chars().count();
-    if start_char >= cells.len() {
-        return None;
+fn hit_from_span(
+    _text: &str,
+    cells: &[(usize, u16, u16, usize)],
+    start: usize,
+    end: usize,
+    action: LinkAction,
+) -> Option<LinkHit> {
+    let mut covered = Vec::new();
+    let mut offset = 0usize;
+    for &(row, col, width, bytes) in cells {
+        let next = offset.saturating_add(bytes);
+        if offset < end && next > start {
+            for extra in 0..width {
+                covered.push((row, col.saturating_add(extra)));
+            }
+        }
+        offset = next;
     }
-    let covered = &cells[start_char..end_char.min(cells.len())];
     if covered.is_empty() {
         return None;
     }
     Some(LinkHit {
         action,
-        ranges: coalesce_ranges(covered),
+        ranges: coalesce_ranges(&covered),
     })
 }
 
@@ -704,11 +808,11 @@ pub fn paint(
         // A block cursor is painted under glyphs so the current cell stays
         // readable and lines up with the same grid used for text.
         if focused && crate::config::cursor_shape(cx) == crate::config::CursorShape::Block {
-            if let Some(cursor) = frame.cursor.filter(|cursor| cursor.y as usize == row_idx) {
+            if let Some((x_col, _, columns)) = cursor_cover(frame).filter(|&(_, y_row, _)| y_row as usize == row_idx) {
                 window.paint_quad(fill(
                     Bounds {
-                        origin: point(bounds.origin.x + theme::TERMINAL_PAD + cell.x * cursor.x as f32, y),
-                        size: size(cell.x, cell.y),
+                        origin: point(bounds.origin.x + theme::TERMINAL_PAD + cell.x * x_col as f32, y),
+                        size: size(cell.x * columns as f32, cell.y),
                     },
                     cursor_color,
                 ));
@@ -766,6 +870,32 @@ fn paint_span_text(
     window: &mut Window,
     cx: &mut gpui::App,
 ) {
+    if span.text.is_empty() {
+        return;
+    }
+
+    if is_wide_glyph(span) {
+        let highlighted = range_overlaps(span_col, span_col.saturating_add(span.columns), highlights);
+        paint_shaped_run(
+            &span.text,
+            x,
+            y,
+            cell.x * span.columns as f32,
+            cell.y,
+            1,
+            span.bold,
+            highlighted,
+            span.fg,
+            font,
+            font_size,
+            link_color,
+            underline,
+            window,
+            cx,
+        );
+        return;
+    }
+
     let span_end = span_col.saturating_add(span.columns);
     let mut cursor = span_col;
     let mut origin_x = x;
@@ -792,31 +922,81 @@ fn paint_span_text(
     for (from, to, highlighted) in cuts {
         let columns = to.saturating_sub(from);
         let width = cell.x * columns as f32;
-        let relative = from.saturating_sub(span_col);
-        let text: String = span.text.chars().skip(relative as usize).take(columns as usize).collect();
+        let text = text_for_column_range(span, from.saturating_sub(span_col), to.saturating_sub(span_col));
         if !text.is_empty() {
-            let run_font = if span.bold || highlighted {
-                font.clone().bold()
-            } else {
-                font.clone()
-            };
-            let line = window.text_system().shape_line(
-                SharedString::from(text.clone()),
+            paint_shaped_run(
+                &text,
+                origin_x,
+                y,
+                width,
+                cell.y,
+                columns,
+                span.bold,
+                highlighted,
+                span.fg,
+                font,
                 font_size,
-                &[TextRun {
-                    len: text.len(),
-                    font: run_font,
-                    color: if highlighted { link_color } else { span.fg.to_hsla() },
-                    background_color: None,
-                    underline: highlighted.then_some(underline),
-                    strikethrough: None,
-                }],
-                Some(cell.x),
+                link_color,
+                underline,
+                window,
+                cx,
             );
-            let _ = line.paint(point(origin_x, y), cell.y, window, cx);
         }
         origin_x += width;
     }
+}
+
+fn range_overlaps(start: u16, end: u16, highlights: &[(u16, u16)]) -> bool {
+    highlights.iter().any(|&(h0, h1)| h0 < end && h1 > start)
+}
+
+fn paint_shaped_run(
+    text: &str,
+    x: Pixels,
+    y: Pixels,
+    width: Pixels,
+    height: Pixels,
+    force_cells: u16,
+    bold: bool,
+    highlighted: bool,
+    fg: Rgb,
+    font: &Font,
+    font_size: Pixels,
+    link_color: Hsla,
+    underline: UnderlineStyle,
+    window: &mut Window,
+    cx: &mut gpui::App,
+) {
+    let run_font = if bold || highlighted {
+        font.clone().bold()
+    } else {
+        font.clone()
+    };
+    let force_width = if force_cells == 0 {
+        None
+    } else {
+        Some(width / force_cells as f32)
+    };
+    let line = window.text_system().shape_line(
+        SharedString::from(text.to_string()),
+        font_size,
+        &[TextRun {
+            len: text.len(),
+            font: run_font,
+            color: if highlighted { link_color } else { fg.to_hsla() },
+            background_color: None,
+            underline: highlighted.then_some(underline),
+            strikethrough: None,
+        }],
+        force_width,
+    );
+    let bounds = Bounds {
+        origin: point(x, y),
+        size: size(width, height),
+    };
+    window.with_content_mask(Some(ContentMask { bounds }), |window| {
+        let _ = line.paint(point(x, y), height, window, cx);
+    });
 }
 
 pub fn terminal_font(cx: &gpui::App) -> Font {
@@ -892,4 +1072,101 @@ pub fn measure_cell(window: &mut Window, cx: &gpui::App) -> Point<Pixels> {
     );
     let width = (line.width / SAMPLE.len() as f32).max(px(1.0));
     point(width, px(crate::config::font_size(cx) * theme::LINE_HEIGHT))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rgb_black() -> Rgb {
+        Rgb { r: 0, g: 0, b: 0 }
+    }
+
+    fn test_span(text: &str, columns: u16) -> FrameSpan {
+        FrameSpan {
+            text: text.to_string(),
+            columns,
+            fg: rgb_black(),
+            bg: None,
+            bold: false,
+            link: None,
+            cluster_bytes: vec![text.len() as u16],
+            cluster_cols: vec![columns],
+        }
+    }
+
+    fn merge_narrow(parts: &[&str]) -> FrameSpan {
+        let mut span = test_span(parts[0], 1);
+        for part in &parts[1..] {
+            let next = test_span(part, 1);
+            assert!(can_merge(&span, &next));
+            span.text.push_str(&next.text);
+            span.columns = span.columns.saturating_add(next.columns);
+            span.cluster_bytes.extend_from_slice(&next.cluster_bytes);
+            span.cluster_cols.extend_from_slice(&next.cluster_cols);
+        }
+        span
+    }
+
+    #[test]
+    fn spacers_are_not_painted() {
+        assert_eq!(display_columns(CellWide::Narrow), Some(1));
+        assert_eq!(display_columns(CellWide::Wide), Some(2));
+        assert_eq!(display_columns(CellWide::SpacerTail), None);
+        assert_eq!(display_columns(CellWide::SpacerHead), None);
+    }
+
+    #[test]
+    fn wide_clusters_do_not_merge_into_ascii() {
+        let ascii = test_span("a", 1);
+        let emoji = test_span("📦", 2);
+        assert!(!can_merge(&ascii, &emoji));
+        assert!(!can_merge(&emoji, &ascii));
+        assert!(can_merge(&ascii, &test_span("b", 1)));
+    }
+
+    #[test]
+    fn column_range_keeps_whole_clusters() {
+        let mixed = merge_narrow(&["h", "i"]);
+        let emoji = test_span("📦", 2);
+        assert!(!can_merge(&mixed, &emoji));
+        assert_eq!(text_for_column_range(&mixed, 0, 1), "h");
+        assert_eq!(text_for_column_range(&mixed, 1, 2), "i");
+        assert_eq!(text_for_column_range(&emoji, 0, 2), "📦");
+        assert_eq!(text_for_column_range(&emoji, 0, 1), "📦");
+    }
+
+    #[test]
+    fn cursor_covers_the_whole_wide_glyph() {
+        let frame = Frame {
+            background: rgb_black(),
+            _foreground: rgb_black(),
+            rows: vec![FrameRow {
+                spans: vec![test_span("a", 1), test_span("📦", 2), test_span("b", 1)],
+                wrapped: false,
+            }],
+            cursor: Some(CursorCell { x: 2, y: 0 }),
+            has_selection: false,
+        };
+        assert_eq!(cursor_cover(&frame), Some((1, 0, 2)));
+        let mut on_ascii = frame.clone();
+        on_ascii.cursor = Some(CursorCell { x: 0, y: 0 });
+        assert_eq!(cursor_cover(&on_ascii), Some((0, 0, 1)));
+    }
+
+    #[test]
+    fn link_hit_covers_both_columns_of_a_wide_cluster() {
+        let cells = vec![(0usize, 0u16, 1u16, 1usize), (0, 1, 2, "📦".len())];
+        let text = "a📦";
+        let start = text.find('📦').unwrap();
+        let hit = hit_from_span(text, &cells, start, text.len(), LinkAction::OpenUrl("https://ex".into())).unwrap();
+        assert_eq!(
+            hit.ranges,
+            vec![LinkRange {
+                row: 0,
+                start_col: 1,
+                end_col: 3,
+            }]
+        );
+    }
 }
