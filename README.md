@@ -148,11 +148,12 @@ The Settings window writes `config.toml` when you change a value. Editing the co
 
 - [ ] IME / composed input (accents, CJK, dead keys)
 - [ ] Find in scrollback (⌘F)
+- [x] Split panes per tab
+- [x] Equalize split sizes
+- [x] Restore the local working directory of each tab (OSC 7 when the shell sends it, otherwise the process cwd)
 - [ ] Zoom the focused pane
-- [ ] Equalize split sizes
 - [ ] Rotate a split
 - [ ] Tab bar per pane
-- [x] Restore the local working directory of each tab (OSC 7 when the shell sends it, otherwise the process cwd)
 - [ ] OSC 7 remote-aware paths
 - [ ] Underline URLs and paths without holding ⌘
 - [ ] Create a test suite (see [Test suite](#test-suite))
