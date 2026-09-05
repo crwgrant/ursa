@@ -19,6 +19,7 @@ pub const WINDOW_MIN_HEIGHT: f32 = 400.0;
 const WINDOW_STATE_FILE: &str = "window.toml";
 
 static LAST_WINDOW_FRAME: Mutex<Option<WindowFrame>> = Mutex::new(None);
+static LAST_SIDEBAR_WIDTH: Mutex<Option<f32>> = Mutex::new(None);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WindowState {
@@ -54,6 +55,7 @@ pub struct WindowFrame {
     pub height: f32,
     pub display: Option<String>,
     pub state: WindowState,
+    pub sidebar_width: Option<f32>,
 }
 
 impl WindowFrame {
@@ -88,6 +90,7 @@ impl WindowFrame {
             height,
             display,
             state,
+            sidebar_width: last.and_then(|frame| frame.sidebar_width).or_else(pending_sidebar_width),
         }
         .sanitized()
     }
@@ -126,6 +129,7 @@ impl WindowFrame {
             height: self.height.max(WINDOW_MIN_HEIGHT),
             display,
             state: self.state,
+            sidebar_width: self.sidebar_width.and_then(sanitized_sidebar_width),
         })
     }
 
@@ -140,17 +144,22 @@ impl WindowFrame {
 # Last Ghostterm window position and size. Updated when you move or resize the window.
 # `display` is the monitor UUID so the window reopens on the same screen.
 # `state` is windowed, maximized, or fullscreen. x/y/width/height are the restored windowed frame.
+# `sidebar_width` is the sessions list width in pixels.
 x = {x}
 y = {y}
 width = {width}
 height = {height}
 state = {state}
-{display}",
+{sidebar}{display}",
             x = format_number(self.x),
             y = format_number(self.y),
             width = format_number(self.width),
             height = format_number(self.height),
             state = toml_string(self.state.as_str()),
+            sidebar = self
+                .sidebar_width
+                .map(|width| format!("sidebar_width = {}\n", format_number(width)))
+                .unwrap_or_default(),
         )
     }
 }
@@ -562,8 +571,71 @@ pub fn save_window_state(window: &gpui::Window, cx: &App) {
     let _ = std::fs::write(path, frame.render());
 }
 
+pub fn clamp_sidebar_width(width: f32, window_width: f32) -> f32 {
+    let Some(width) = sanitized_sidebar_width(width) else {
+        return theme::SIDEBAR_WIDTH;
+    };
+    let max = (window_width - theme::TERMINAL_MIN_WIDTH)
+        .max(theme::SIDEBAR_MIN_WIDTH)
+        .min(theme::SIDEBAR_MAX_WIDTH);
+    width.clamp(theme::SIDEBAR_MIN_WIDTH, max)
+}
+
+pub fn restored_sidebar_width() -> f32 {
+    load_window_frame()
+        .and_then(|frame| frame.sidebar_width)
+        .or_else(pending_sidebar_width)
+        .and_then(sanitized_sidebar_width)
+        .unwrap_or(theme::SIDEBAR_WIDTH)
+}
+
+pub fn save_sidebar_width(width: f32) {
+    let Some(width) = sanitized_sidebar_width(width) else {
+        return;
+    };
+    if let Ok(mut last) = LAST_SIDEBAR_WIDTH.lock() {
+        *last = Some(width);
+    }
+    let Some(mut frame) = LAST_WINDOW_FRAME
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone())
+        .or_else(load_window_frame)
+    else {
+        return;
+    };
+    if frame.sidebar_width == Some(width) {
+        return;
+    }
+    frame.sidebar_width = Some(width);
+    if let Ok(mut last) = LAST_WINDOW_FRAME.lock() {
+        *last = Some(frame.clone());
+    }
+    let path = window_state_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(path, frame.render());
+}
+
+fn pending_sidebar_width() -> Option<f32> {
+    LAST_SIDEBAR_WIDTH.lock().ok().and_then(|guard| *guard)
+}
+
+fn sanitized_sidebar_width(width: f32) -> Option<f32> {
+    if !width.is_finite() {
+        return None;
+    }
+    Some(width.clamp(theme::SIDEBAR_MIN_WIDTH, theme::SIDEBAR_MAX_WIDTH))
+}
+
 pub fn restored_window(cx: &App) -> Option<(WindowBounds, Option<DisplayId>)> {
     let frame = load_window_frame()?;
+    if let Some(width) = frame.sidebar_width {
+        if let Ok(mut last) = LAST_SIDEBAR_WIDTH.lock() {
+            *last = Some(width);
+        }
+    }
     if let Ok(mut last) = LAST_WINDOW_FRAME.lock() {
         *last = Some(frame.clone());
     }
@@ -601,6 +673,7 @@ fn parse_window_frame(text: &str) -> Option<WindowFrame> {
         height: file.height?,
         display: file.display,
         state: WindowState::parse(file.state.as_deref()),
+        sidebar_width: file.sidebar_width,
     }
     .sanitized()
 }
@@ -662,6 +735,7 @@ struct WindowFile {
     height: Option<f32>,
     display: Option<String>,
     state: Option<String>,
+    sidebar_width: Option<f32>,
 }
 
 fn config_dir() -> Option<PathBuf> {
@@ -1031,7 +1105,7 @@ mod tests {
     #[test]
     fn window_frame_round_trip() {
         let parsed = parse_window_frame(
-            "x = 120\ny = 80\nwidth = 800\nheight = 500\nstate = \"windowed\"\ndisplay = \"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\"\n",
+            "x = 120\ny = 80\nwidth = 800\nheight = 500\nstate = \"windowed\"\nsidebar_width = 260\ndisplay = \"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\"\n",
         )
         .unwrap();
         assert_eq!(parsed.x, 120.0);
@@ -1039,6 +1113,7 @@ mod tests {
         assert_eq!(parsed.width, 800.0);
         assert_eq!(parsed.height, 500.0);
         assert_eq!(parsed.state, WindowState::Windowed);
+        assert_eq!(parsed.sidebar_width, Some(260.0));
         assert_eq!(parsed.display.as_deref(), Some("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"));
         let again = parse_window_frame(&parsed.render()).unwrap();
         assert_eq!(again, parsed);
@@ -1051,6 +1126,15 @@ mod tests {
         assert_eq!(maximized.width, 900.0);
         let legacy = parse_window_frame("x = 40\ny = 60\nwidth = 900\nheight = 600\n").unwrap();
         assert_eq!(legacy.state, WindowState::Windowed);
+        assert_eq!(legacy.sidebar_width, None);
+    }
+
+    #[test]
+    fn sidebar_width_clamps() {
+        assert_eq!(clamp_sidebar_width(80.0, 1100.0), theme::SIDEBAR_MIN_WIDTH);
+        assert_eq!(clamp_sidebar_width(800.0, 1100.0), theme::SIDEBAR_MAX_WIDTH);
+        assert_eq!(clamp_sidebar_width(260.0, 1100.0), 260.0);
+        assert_eq!(clamp_sidebar_width(400.0, 500.0), 180.0);
     }
 
     #[test]
