@@ -742,15 +742,15 @@ fn restore_terminal(
     snapshot: Option<&[u8]>,
     cols: u16,
     rows: u16,
-) -> Result<Terminal<'static, 'static>, Box<dyn std::error::Error>> {
+) -> Result<(Terminal<'static, 'static>, bool), Box<dyn std::error::Error>> {
     if let Some(bytes) = snapshot {
         if !bytes.is_empty() {
             if let Ok(terminal) = libghostty_vt::snapshot::Decoder::new_buf(bytes).and_then(|decoder| decoder.decode()) {
-                return Ok(terminal);
+                return Ok((terminal, true));
             }
         }
     }
-    Ok(Terminal::new(cols, rows)?)
+    Ok((Terminal::new(cols, rows)?, false))
 }
 
 fn terminal_cwd(terminal: &Terminal, pid: Option<u32>) -> Option<PathBuf> {
@@ -801,11 +801,17 @@ fn run_emulator(
         cell_height: f32::from(cell.y) as u32,
     }));
 
-    let mut terminal = restore_terminal(snapshot.as_deref(), cols, rows)?;
+    let (mut terminal, restored) = restore_terminal(snapshot.as_deref(), cols, rows)?;
     let _ = terminal.set_continuation_max_bytes(64 * 1024);
     terminal.set_scrollback_max_lines(Some(scrollback_lines as usize))?;
     terminal.resize(cols, rows, f32::from(cell.x) as u32, f32::from(cell.y) as u32)?;
     apply_terminal_theme(&mut terminal, colors)?;
+    if restored {
+        // Snapshot leaves the cursor on the old prompt. A new shell — zsh with
+        // PROMPT_SP in particular — then prints a reverse-video '%' for a
+        // "partial line" that never ended in a newline.
+        terminal.vt_write(b"\r\n");
+    }
     let pid = pty.pid;
 
     let writer = pty.writer.clone();
