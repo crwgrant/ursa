@@ -325,7 +325,7 @@ impl Session {
             cx.stop_propagation();
             return;
         }
-        if reserved_shortcut(&event.keystroke.modifiers, &event.keystroke.key) {
+        if reserved_shortcut(&event.keystroke.modifiers, &event.keystroke.key, cx) {
             return;
         }
         if self.exited {
@@ -677,7 +677,7 @@ pub fn clipboard_has_text(cx: &App) -> bool {
         .is_some_and(|text| !text.is_empty())
 }
 
-fn reserved_shortcut(modifiers: &gpui::Modifiers, key: &str) -> bool {
+fn reserved_shortcut(modifiers: &gpui::Modifiers, key: &str, cx: &App) -> bool {
     let digit = matches!(key, "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9");
     if modifiers.platform && (matches!(key, "q" | "t" | "w" | "n" | "c" | "v" | "k" | ",") || digit) {
         return true;
@@ -688,7 +688,10 @@ fn reserved_shortcut(modifiers: &gpui::Modifiers, key: &str) -> bool {
     if modifiers.control && modifiers.alt && matches!(key, "t" | "w") {
         return true;
     }
-    modifiers.control && (digit || key == ",")
+    if modifiers.control && key == "," {
+        return true;
+    }
+    modifiers.control && digit && crate::config::sessions_enabled(cx)
 }
 
 fn exited_banner(colors: theme::Colors) -> impl IntoElement {

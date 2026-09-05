@@ -1,6 +1,6 @@
 # Ghostterm
 
-A terminal emulator built in Rust with [GPUI](https://github.com/zed-industries/zed) and [libghostty-vt](https://github.com/uzaaft/libghostty-rs). Each window has a left sidebar of sessions; each session has horizontal tabs and a terminal that talks to your login shell over a PTY.
+A terminal emulator built in Rust with [GPUI](https://github.com/zed-industries/zed) and [libghostty-vt](https://github.com/uzaaft/libghostty-rs). Each window can show a left sidebar of sessions; each session has horizontal tabs and a terminal that talks to your login shell over a PTY. **Settings → Session sidebar** can hide the list so the window is only horizontal tabs.
 
 ## Features
 
@@ -14,7 +14,8 @@ A terminal emulator built in Rust with [GPUI](https://github.com/zed-industries/
 - Right-click a URL, URI, or path for **Copy**, **Paste**, and **Open Link** (or **Open Folder**)
 - In-app toasts for copy and paste feedback (bottom-right, click or wait to dismiss)
 - **⌘K** clears the screen and scrollback; the shell redraws the prompt at the top
-- Settings window (**⌘,** or **Ghostterm → Settings**) for theme, font family, size, cursor style, scrollback, and whether sessions are kept; values are stored in a Ghostterm-owned config file you can also edit by hand
+- Settings window (**⌘,** or **Ghostterm → Settings**) for theme, font family, size, cursor style, scrollback, session restore, and the session sidebar; values are stored in a Ghostterm-owned config file you can also edit by hand
+- **Settings → Session sidebar → Off** hides the sessions list and session shortcuts; only horizontal tabs remain. **Keep sessions** still restores that one session’s tabs
 - **Settings → Sessions → Keep sessions** restores sessions, tabs, working directories, and on-screen text on reopen, and keeps a tab open if its shell exits. **Close sessions** starts fresh and does not save previous sessions
 - New window with **⌘N** or **File → New Window**; closing the last session leaves the app running so a Dock click (or ⌘N) can open another
 - Typing `exit` in the top-level shell closes that tab unless **Keep sessions** is on. The last tab in a session closes the session; the last session closes the window without quitting the app
@@ -86,6 +87,7 @@ themes = "themes"
 scrollback_lines = 2000
 cursor = "bar" # or "block"
 on_exit = "close" # or "keep" — close sessions on quit, or keep and restore them
+sessions = true # or false — hide the session sidebar and use horizontal tabs only
 ```
 
 `theme` is the filename stem of a Ghostty `.conf` in the themes folder (`nord`, `one-dark`, `tokyo-night`, `catppuccin-mocha`, `catppuccin-frappe`, `gruvbox-dark`, `solarized-light`). `themes` is that folder: relative to `config.toml`, or absolute.
@@ -122,7 +124,7 @@ The Settings window writes `config.toml` when you change a value. Editing the co
 - [x] Drag to reorder tabs in the sidebar
 - [ ] Rename tabs
 - [x] Option to keep a tab open after the shell exits
-- [ ] Option to turn off sessions and have simple terminal with horizontal tabs
+- [x] Option to turn off sessions and have simple terminal with horizontal tabs
 
 ### Rendering
 
@@ -172,6 +174,7 @@ Config parse/round-trip tests live in `src/config.rs` (`cargo test`). A broader 
 - Nested `exit` (subshell) does not close the tab
 - Adding and closing sessions and tabs updates the active index
 - `on_exit = "keep"` restores sessions on relaunch; `on_exit = "close"` does not save them
+- Session sidebar off hides the list and session shortcuts; restore keeps that one session’s tabs
 - Quitting with only an unused session does not restore that tab
 - ⌘N opens another window; Dock click with no windows opens one too
 
