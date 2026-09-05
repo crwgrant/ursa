@@ -20,6 +20,7 @@ pub fn spawn_shell(
     cell_height: u32,
     output: flume::Sender<Vec<u8>>,
     cwd: Option<&Path>,
+    kind: crate::config::WindowsShell,
 ) -> Result<PtyIo, Box<dyn std::error::Error + Send + Sync>> {
     let system = native_pty_system();
     let pair = system.openpty(PtySize {
@@ -29,7 +30,7 @@ pub fn spawn_shell(
         pixel_height: cell_height as u16,
     })?;
 
-    let shell = default_shell();
+    let shell = default_shell(kind);
     let mut cmd = CommandBuilder::new(&shell.program);
     for arg in &shell.args {
         cmd.arg(arg);
@@ -97,13 +98,14 @@ impl ShellLaunch {
     }
 }
 
-fn default_shell() -> ShellLaunch {
+fn default_shell(kind: crate::config::WindowsShell) -> ShellLaunch {
     #[cfg(windows)]
     {
-        windows_shell()
+        windows_shell(kind)
     }
     #[cfg(not(windows))]
     {
+        let _ = kind;
         // Login so `.zprofile` / Homebrew `brew shellenv` run before `.zshrc`.
         // A Finder-launched .app does not inherit the PATH from iTerm.
         ShellLaunch::new(std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into())).with_args(["-l"])
@@ -152,8 +154,28 @@ fn login_path_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+pub fn git_bash_available() -> bool {
+    #[cfg(windows)]
+    {
+        find_git_bash().is_some()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 #[cfg(windows)]
-fn windows_shell() -> ShellLaunch {
+fn windows_shell(kind: crate::config::WindowsShell) -> ShellLaunch {
+    match kind {
+        crate::config::WindowsShell::PowerShell => powershell_or_cmd(),
+        crate::config::WindowsShell::GitBash => find_git_bash().map(git_bash_launch).unwrap_or_else(powershell_or_cmd),
+        crate::config::WindowsShell::Auto => auto_windows_shell(),
+    }
+}
+
+#[cfg(windows)]
+fn auto_windows_shell() -> ShellLaunch {
     if let Ok(shell) = std::env::var("SHELL") {
         if !shell.is_empty() && !shell.starts_with('/') {
             return launch_from_program(shell);
@@ -164,6 +186,11 @@ fn windows_shell() -> ShellLaunch {
         return git_bash_launch(bash);
     }
 
+    powershell_or_cmd()
+}
+
+#[cfg(windows)]
+fn powershell_or_cmd() -> ShellLaunch {
     let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
     let powershell = PathBuf::from(&system_root)
         .join("System32")

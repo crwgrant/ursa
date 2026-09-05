@@ -22,6 +22,7 @@ enum MenuKind {
     Cursor,
     OnExit,
     SessionSidebar,
+    WindowsShell,
     Theme,
 }
 
@@ -101,6 +102,14 @@ impl SettingsPage {
     fn select_session_sidebar(&mut self, session_sidebar: config::SessionSidebar, cx: &mut Context<Self>) {
         config::update(cx, |config| {
             config.session_sidebar = session_sidebar;
+        });
+        self.open_menu = None;
+        cx.notify();
+    }
+
+    fn select_windows_shell(&mut self, windows_shell: config::WindowsShell, cx: &mut Context<Self>) {
+        config::update(cx, |config| {
+            config.windows_shell = windows_shell;
         });
         self.open_menu = None;
         cx.notify();
@@ -192,6 +201,7 @@ impl Render for SettingsPage {
         let cursor_shape = config.cursor_shape;
         let on_exit = config.on_exit;
         let session_sidebar = config.session_sidebar;
+        let windows_shell = config.windows_shell;
         let app_theme = config.theme;
         let path = config::display_path(cx);
         let error = config::load_error(cx);
@@ -276,6 +286,23 @@ impl Render for SettingsPage {
                     .collect();
                 dropdown_overlay("session-sidebar-menu", position, items, cx).into_any_element()
             }
+            MenuKind::WindowsShell => {
+                let selected = windows_shell.resolved();
+                let items: Vec<_> = config::WindowsShell::choices()
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, option)| {
+                        dropdown_item(
+                            ("windows-shell-choice", index).into(),
+                            option.label().to_string(),
+                            option == selected,
+                            cx,
+                            move |this, cx| this.select_windows_shell(option, cx),
+                        )
+                    })
+                    .collect();
+                dropdown_overlay("windows-shell-menu", position, items, cx).into_any_element()
+            }
             MenuKind::Theme => {
                 let items: Vec<_> = theme::choices(cx)
                     .into_iter()
@@ -319,6 +346,9 @@ impl Render for SettingsPage {
                     .child(cursor_row(cursor_shape, cx))
                     .child(on_exit_row(on_exit, cx))
                     .child(session_sidebar_row(session_sidebar, cx))
+                    .when(cfg!(windows) && session_sidebar == config::SessionSidebar::Off, |section| {
+                        section.child(windows_shell_row(windows_shell, cx))
+                    })
                     .child(scrollback_row(self.scrollback.clone(), colors))
                     .child(section_label("Config file", colors))
                     .child(div().text_xs().text_color(rgb(colors.text_dim)).child(path))
@@ -397,6 +427,16 @@ fn session_sidebar_row(session_sidebar: config::SessionSidebar, cx: &mut Context
         "Session sidebar",
         session_sidebar.label().to_string(),
         MenuKind::SessionSidebar,
+        cx,
+    )
+}
+
+fn windows_shell_row(windows_shell: config::WindowsShell, cx: &mut Context<SettingsPage>) -> impl IntoElement {
+    dropdown_row(
+        "windows-shell",
+        "Shell",
+        windows_shell.resolved().label().to_string(),
+        MenuKind::WindowsShell,
         cx,
     )
 }
