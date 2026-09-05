@@ -1901,8 +1901,10 @@ fn apply_app_menus(cx: &mut App) {
 fn workspace_key_bindings() -> Vec<KeyBinding> {
     let mut bindings = vec![
         KeyBinding::new("cmd-q", Quit, None),
+        KeyBinding::new("ctrl-q", Quit, None),
         KeyBinding::new("cmd-n", NewWindow, None),
         KeyBinding::new("ctrl-n", NewWindow, None),
+        KeyBinding::new("ctrl-shift-k", ClearScreen, None),
         KeyBinding::new("cmd-shift-t", NewSession, None),
         KeyBinding::new("cmd-t", NewTab, None),
         KeyBinding::new("cmd-w", CloseTab, None),
@@ -1948,10 +1950,7 @@ fn main() {
     });
     app.run(|cx: &mut App| {
         config::init(cx);
-        cx.on_action(|_: &Quit, cx| {
-            save_workspace_windows(cx);
-            cx.quit();
-        });
+        cx.on_action(|_: &Quit, cx| quit_app(cx));
         cx.on_action(|_: &NewWindow, cx| {
             open_workspace_window(cx);
         });
@@ -1970,6 +1969,7 @@ fn open_workspace_window(cx: &mut App) {
     let _ = cx.open_window(workspace_window_options(cx), |window, cx| {
         window.on_window_should_close(cx, |window, cx| {
             config::save_window_state(window, cx);
+            quit_if_last_window(cx);
             true
         });
         let restore = cx.windows().len() <= 1;
@@ -1985,6 +1985,20 @@ pub(crate) fn reset_workspace_sidebars(cx: &mut App) {
         let _ = workspace.update(cx, |this, window, cx| {
             this.reset_sidebar_width(window, cx);
         });
+    }
+}
+
+fn quit_app(cx: &mut App) {
+    save_workspace_windows(cx);
+    cx.quit();
+}
+
+pub(crate) fn quit_if_last_window(cx: &mut App) {
+    if cfg!(target_os = "macos") {
+        return;
+    }
+    if cx.windows().len() <= 1 {
+        quit_app(cx);
     }
 }
 

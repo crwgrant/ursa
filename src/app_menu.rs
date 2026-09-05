@@ -173,18 +173,13 @@ fn file_items(sessions_enabled: bool) -> Vec<BarItem> {
     items.push(BarItem::Separator);
     items.push(action_item("file-settings", "Settings…", Some(settings_shortcut()), OpenSettings));
     items.push(BarItem::Separator);
-    items.push(action_item("file-quit", "Quit Ursa", None::<&str>, Quit));
+    items.push(action_item("file-quit", "Quit Ursa", Some(quit_shortcut()), Quit));
     items
 }
 
 fn view_items(sessions_enabled: bool) -> Vec<BarItem> {
     let mut items = vec![
-        action_item(
-            "view-clear",
-            "Clear Screen",
-            cfg!(target_os = "macos").then_some(clear_screen_shortcut()),
-            ClearScreen,
-        ),
+        action_item("view-clear", "Clear Screen", Some(clear_screen_shortcut()), ClearScreen),
         BarItem::Separator,
         action_item("view-next-pane", "Focus Next Pane", Some(focus_next_shortcut()), FocusNextPane),
         action_item("view-prev-pane", "Focus Previous Pane", Some(focus_prev_shortcut()), FocusPrevPane),
@@ -267,7 +262,11 @@ fn split_down_shortcut() -> &'static str {
 }
 
 fn clear_screen_shortcut() -> &'static str {
-    "⌘K"
+    if cfg!(target_os = "macos") { "⌘K" } else { "Ctrl+Shift+K" }
+}
+
+fn quit_shortcut() -> &'static str {
+    if cfg!(target_os = "macos") { "⌘Q" } else { "Ctrl+Q" }
 }
 
 fn focus_next_shortcut() -> &'static str {
