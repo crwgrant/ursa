@@ -141,10 +141,7 @@ fn window_menus(sessions_enabled: bool) -> Vec<BarMenu> {
         BarMenu {
             id: MenuId::Help,
             name: "Help",
-            items: vec![
-                action_item("help-settings", "Settings…", Some(settings_shortcut()), OpenSettings),
-                action_item("help-about", "About Ursa", None::<&str>, OpenAbout),
-            ],
+            items: vec![action_item("help-about", "About Ursa", None::<&str>, OpenAbout)],
         },
     ]
 }
@@ -172,6 +169,8 @@ fn file_items(sessions_enabled: bool) -> Vec<BarItem> {
             CloseSession,
         ));
     }
+    items.push(BarItem::Separator);
+    items.push(action_item("file-settings", "Settings…", Some(settings_shortcut()), OpenSettings));
     items.push(BarItem::Separator);
     items.push(action_item("file-quit", "Quit Ursa", None::<&str>, Quit));
     items
@@ -461,9 +460,10 @@ mod tests {
     fn window_menus_include_quit_and_help() {
         let menus = labels(true);
         assert_eq!(menus[0].0, "File");
+        assert!(menus[0].1.contains(&"Settings…".to_string()));
         assert!(menus[0].1.contains(&"Quit Ursa".to_string()));
         assert_eq!(menus[3].0, "Help");
-        assert!(menus[3].1.contains(&"Settings…".to_string()));
+        assert!(!menus[3].1.contains(&"Settings…".to_string()));
         assert!(menus[3].1.contains(&"About Ursa".to_string()));
     }
 
