@@ -39,6 +39,9 @@ pub fn spawn_shell(
     }
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
+    if let Some(path) = login_path() {
+        cmd.env("PATH", path);
+    }
     if let Some(cwd) = crate::cwd::usable_cwd(cwd).or_else(home_dir) {
         cmd.cwd(cwd);
     }
@@ -91,7 +94,6 @@ impl ShellLaunch {
         }
     }
 
-    #[cfg(windows)]
     fn with_args(mut self, args: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.args.extend(args.into_iter().map(Into::into));
         self
@@ -105,8 +107,52 @@ fn default_shell() -> ShellLaunch {
     }
     #[cfg(not(windows))]
     {
-        ShellLaunch::new(std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into()))
+        // Login so `.zprofile` / Homebrew `brew shellenv` run before `.zshrc`.
+        // A Finder-launched .app does not inherit the PATH from iTerm.
+        ShellLaunch::new(std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into())).with_args(["-l"])
     }
+}
+
+fn login_path() -> Option<std::ffi::OsString> {
+    let mut dirs = Vec::new();
+    let mut push = |path: PathBuf| {
+        if path.is_dir() && !dirs.iter().any(|existing| existing == &path) {
+            dirs.push(path);
+        }
+    };
+    for dir in login_path_dirs() {
+        push(dir);
+    }
+    if let Some(existing) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&existing) {
+            push(dir);
+        }
+    }
+    std::env::join_paths(dirs).ok()
+}
+
+fn login_path_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    #[cfg(target_os = "macos")]
+    {
+        dirs.push(PathBuf::from("/opt/homebrew/bin"));
+        dirs.push(PathBuf::from("/opt/homebrew/sbin"));
+        dirs.push(PathBuf::from("/usr/local/bin"));
+    }
+    #[cfg(windows)]
+    {
+        if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+            dirs.push(PathBuf::from(local_app_data).join("Programs").join("Git").join("cmd"));
+        }
+        if let Ok(program_files) = std::env::var("ProgramFiles") {
+            dirs.push(PathBuf::from(program_files).join("Git").join("cmd"));
+        }
+    }
+    if let Some(home) = home_dir() {
+        dirs.push(home.join(".local").join("bin"));
+        dirs.push(home.join(".cargo").join("bin"));
+    }
+    dirs
 }
 
 #[cfg(windows)]
@@ -233,6 +279,23 @@ pub fn write_pty(writer: &Mutex<Box<dyn Write + Send>>, data: &[u8]) {
     if let Ok(mut writer) = writer.lock() {
         let _ = writer.write_all(data);
         let _ = writer.flush();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::login_path_dirs;
+
+    #[test]
+    fn login_path_includes_user_bin_dirs() {
+        let dirs = login_path_dirs();
+        if let Some(home) = super::home_dir() {
+            assert!(dirs.contains(&home.join(".cargo").join("bin")));
+        }
+        #[cfg(target_os = "macos")]
+        {
+            assert!(dirs.iter().any(|path| path.ends_with("opt/homebrew/bin")));
+        }
     }
 }
 
