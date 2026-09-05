@@ -986,6 +986,26 @@ fn settings_shortcut() -> &'static str {
     if cfg!(target_os = "macos") { "⌘," } else { "Ctrl+," }
 }
 
+fn view_menu() -> Menu {
+    let mut items = vec![
+        MenuItem::action("Clear Screen", ClearScreen),
+        MenuItem::separator(),
+        MenuItem::action("Close Session", CloseSession),
+        MenuItem::separator(),
+    ];
+    for number in 1..=9 {
+        items.push(MenuItem::action(format!("Tab {number}"), ActivateTab { index: number - 1 }));
+    }
+    items.push(MenuItem::separator());
+    for number in 1..=9 {
+        items.push(MenuItem::action(format!("Session {number}"), ActivateSession { index: number - 1 }));
+    }
+    Menu {
+        name: "View".into(),
+        items,
+    }
+}
+
 fn workspace_key_bindings() -> Vec<KeyBinding> {
     let mut bindings = vec![
         KeyBinding::new("cmd-q", Quit, None),
@@ -1060,10 +1080,7 @@ fn main() {
                 name: "Edit".into(),
                 items: vec![MenuItem::action("Copy", Copy), MenuItem::action("Paste", Paste)],
             },
-            Menu {
-                name: "View".into(),
-                items: vec![MenuItem::action("Clear Screen", ClearScreen)],
-            },
+            view_menu(),
             Menu {
                 name: "Window".into(),
                 items: vec![MenuItem::action("Close", CloseTab)],
