@@ -114,6 +114,7 @@ The Settings window writes `config.toml` when you change a value. Editing the co
 - [ ] Drag to reorder tabs in the sidebar
 - [ ] Rename tabs
 - [ ] Option to keep a tab open after the shell exits
+- [ ] Option to turn off sessions and have simple terminal with horizontal tabs
 
 ### Rendering
 
