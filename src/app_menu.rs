@@ -1,6 +1,6 @@
 use gpui::{
     Action, AnyElement, Context, Corner, InteractiveElement, IntoElement, Menu, MenuItem, MouseButton, MouseDownEvent,
-    MouseMoveEvent, ParentElement, Pixels, Point, SharedString, StatefulInteractiveElement, Styled, Window, anchored, div, point,
+    ParentElement, Pixels, Point, SharedString, StatefulInteractiveElement, Styled, Window, anchored, canvas, div, point,
     prelude::*, px, rgb,
 };
 
@@ -25,8 +25,9 @@ pub struct OpenMenu {
 }
 
 pub trait AppMenuState: Sized {
-    fn toggle_app_menu(&mut self, id: MenuId, origin: Point<Pixels>, cx: &mut Context<Self>);
-    fn hover_app_menu(&mut self, id: MenuId, origin: Point<Pixels>, cx: &mut Context<Self>);
+    fn record_menu_title(&mut self, id: MenuId, origin: Point<Pixels>);
+    fn toggle_app_menu(&mut self, id: MenuId, fallback_x: Pixels, cx: &mut Context<Self>);
+    fn hover_app_menu(&mut self, id: MenuId, cx: &mut Context<Self>);
     fn dismiss_app_menu(&mut self, cx: &mut Context<Self>) -> bool;
     fn run_app_menu_action(&mut self, action: Box<dyn Action>, window: &mut Window, cx: &mut Context<Self>);
 }
@@ -293,8 +294,8 @@ fn session_shortcut(number: usize) -> String {
     }
 }
 
-fn menu_origin(event_x: Pixels) -> Point<Pixels> {
-    point(event_x, px(MENU_BAR_HEIGHT))
+pub fn dropdown_origin(title_x: Option<Pixels>, fallback_x: Pixels) -> Point<Pixels> {
+    point(title_x.unwrap_or(fallback_x), px(MENU_BAR_HEIGHT))
 }
 
 pub fn render_bar<S: AppMenuState + 'static>(
@@ -322,8 +323,10 @@ fn render_title<S: AppMenuState + 'static>(menu: BarMenu, open: Option<MenuId>, 
     let colors = theme::colors(cx);
     let id = menu.id;
     let selected = open == Some(id);
+    let entity = cx.entity();
     div()
         .id(("app-menu", id as u32))
+        .relative()
         .h_full()
         .px_2()
         .flex()
@@ -332,16 +335,26 @@ fn render_title<S: AppMenuState + 'static>(menu: BarMenu, open: Option<MenuId>, 
         .cursor_pointer()
         .when(selected, |el| el.bg(rgb(colors.tab_hover)))
         .hover(move |style| style.bg(rgb(colors.tab_hover)))
+        .child(
+            canvas(
+                move |bounds, _, cx| {
+                    entity.update(cx, |this, _| this.record_menu_title(id, bounds.origin));
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .size_full(),
+        )
         .child(menu.name)
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
-                this.toggle_app_menu(id, menu_origin(event.position.x), cx);
+                this.toggle_app_menu(id, event.position.x, cx);
                 cx.stop_propagation();
             }),
         )
-        .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _window, cx| {
-            this.hover_app_menu(id, menu_origin(event.position.x), cx);
+        .on_mouse_move(cx.listener(move |this, _event, _window, cx| {
+            this.hover_app_menu(id, cx);
         }))
 }
 
@@ -373,23 +386,27 @@ pub fn render_popovers<S: AppMenuState + 'static>(
                 }),
             ))
             .child(
-                anchored().position(open.origin).anchor(Corner::TopLeft).child(
-                    div()
-                        .id(("app-menu-dropdown", menu.id as u32))
-                        .occlude()
-                        .min_w(px(220.0))
-                        .max_w(px(280.0))
-                        .max_h(px(360.0))
-                        .overflow_y_scroll()
-                        .py_1()
-                        .rounded_md()
-                        .bg(rgb(colors.tooltip))
-                        .border_1()
-                        .border_color(rgb(colors.sidebar_border))
-                        .shadow_md()
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .children(menu.items.into_iter().map(|item| render_item(item, cx))),
-                ),
+                anchored()
+                    .position(open.origin)
+                    .anchor(Corner::TopLeft)
+                    .snap_to_window()
+                    .child(
+                        div()
+                            .id(("app-menu-dropdown", menu.id as u32))
+                            .occlude()
+                            .min_w(px(220.0))
+                            .max_w(px(280.0))
+                            .max_h(px(360.0))
+                            .overflow_y_scroll()
+                            .py_1()
+                            .rounded_md()
+                            .bg(rgb(colors.tooltip))
+                            .border_1()
+                            .border_color(rgb(colors.sidebar_border))
+                            .shadow_md()
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .children(menu.items.into_iter().map(|item| render_item(item, cx))),
+                    ),
             )
             .into_any_element(),
     ]

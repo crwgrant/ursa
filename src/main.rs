@@ -97,6 +97,7 @@ struct Workspace {
     pane_bounds: HashMap<u64, Bounds<Pixels>>,
     pane_split_locked: bool,
     open_menu: Option<app_menu::OpenMenu>,
+    menu_title_x: [Option<gpui::Pixels>; 4],
 }
 
 #[derive(Clone)]
@@ -509,6 +510,7 @@ impl Workspace {
             pane_bounds: HashMap::new(),
             pane_split_locked: false,
             open_menu: None,
+            menu_title_x: [None; 4],
         };
         workspace.assign_all_split_ids();
         for index in 0..workspace.sessions.len() {
@@ -1152,22 +1154,30 @@ impl Render for Workspace {
 }
 
 impl app_menu::AppMenuState for Workspace {
-    fn toggle_app_menu(&mut self, id: app_menu::MenuId, origin: gpui::Point<Pixels>, cx: &mut Context<Self>) {
+    fn record_menu_title(&mut self, id: app_menu::MenuId, origin: gpui::Point<Pixels>) {
+        if let Some(slot) = self.menu_title_x.get_mut(id as usize) {
+            *slot = Some(origin.x);
+        }
+    }
+
+    fn toggle_app_menu(&mut self, id: app_menu::MenuId, fallback_x: gpui::Pixels, cx: &mut Context<Self>) {
         if self.open_menu.as_ref().map(|menu| menu.id) == Some(id) {
             self.open_menu = None;
         } else {
+            let origin = app_menu::dropdown_origin(self.menu_title_x.get(id as usize).copied().flatten(), fallback_x);
             self.open_menu = Some(app_menu::OpenMenu { id, origin });
         }
         cx.notify();
     }
 
-    fn hover_app_menu(&mut self, id: app_menu::MenuId, origin: gpui::Point<Pixels>, cx: &mut Context<Self>) {
+    fn hover_app_menu(&mut self, id: app_menu::MenuId, cx: &mut Context<Self>) {
         let Some(open) = &self.open_menu else {
             return;
         };
         if open.id == id {
             return;
         }
+        let origin = app_menu::dropdown_origin(self.menu_title_x.get(id as usize).copied().flatten(), open.origin.x);
         self.open_menu = Some(app_menu::OpenMenu { id, origin });
         cx.notify();
     }
