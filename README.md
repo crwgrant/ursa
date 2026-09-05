@@ -114,7 +114,7 @@ The Settings window writes `config.toml` when you change a value. Editing the co
 
 ### Rendering
 
-- [ ] Fix Ghostty theme functionality so palette, foreground, background, and cursor colors actually apply
+- [x] Fix Ghostty theme functionality so palette, foreground, background, and cursor colors actually apply
 - [ ] Italic, underline, strikethrough, dim, and fuller 256/truecolor support
 - [ ] Wide glyphs and emoji so the grid and cursor stay aligned
 - [ ] Image protocols (iTerm2 / Kitty) once text rendering is solid
