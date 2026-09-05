@@ -15,10 +15,13 @@ path = "src/main.rs"
 product-name = "Ursa"
 identifier = "com.crwgrant.ursa"
 before-packaging-command = "cargo build --release"
-icons = ["packaging/AppIcon.icns"]
+icons = ["packaging/AppIcon.icns", "packaging/AppIcon.ico"]
 
 [package.metadata.packager.macos]
 minimum-system-version = "15.0"
+
+[package.metadata.packager.nsis]
+installer-icon = "packaging/AppIcon.ico"
 
 [dependencies]
 flume = "0.11"
@@ -27,3 +30,6 @@ libghostty-vt = { git = "https://github.com/uzaaft/libghostty-rs" }
 portable-pty = "0.9"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
+
+[build-dependencies]
+winresource = "0.1"
