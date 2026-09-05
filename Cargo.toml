@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 description = "A native terminal with a reliable bearing"
 license = "MIT OR Apache-2.0"
+default-run = "Ursa"
+
+[[bin]]
+name = "Ursa"
+path = "src/main.rs"
 
 [package.metadata.packager]
 product-name = "Ursa"
