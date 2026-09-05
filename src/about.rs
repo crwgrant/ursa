@@ -60,6 +60,7 @@ pub fn open(cx: &mut App) {
                     if cx.has_global::<AboutUi>() {
                         cx.global_mut::<AboutUi>().window = None;
                     }
+                    crate::quit_if_last_window(cx);
                     true
                 });
             });
@@ -140,12 +141,7 @@ impl Render for AboutPage {
                     .object_fit(ObjectFit::Contain)
                     .rounded_lg(),
             )
-            .child(
-                div()
-                    .text_xl()
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .child(APP_NAME),
-            )
+            .child(div().text_xl().font_weight(gpui::FontWeight::SEMIBOLD).child(APP_NAME))
             .child(div().text_sm().text_color(rgb(colors.text_dim)).child(TAGLINE))
             .child(div().text_sm().child(format!("Version {VERSION}")))
             .child(

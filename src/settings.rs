@@ -141,6 +141,7 @@ pub fn open(cx: &mut App) {
                     if cx.has_global::<SettingsUi>() {
                         cx.global_mut::<SettingsUi>().window = None;
                     }
+                    crate::quit_if_last_window(cx);
                     true
                 });
             });
@@ -593,7 +594,7 @@ impl ScrollbackField {
     fn handle_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
         let modifiers = &event.keystroke.modifiers;
         let key = event.keystroke.key.as_str();
-        if modifiers.platform && key == "v" {
+        if edit_modifier(modifiers) && key == "v" {
             let digits = cx
                 .read_from_clipboard()
                 .and_then(|item| item.text())
@@ -603,7 +604,7 @@ impl ScrollbackField {
             cx.stop_propagation();
             return;
         }
-        if modifiers.platform && key == "c" {
+        if edit_modifier(modifiers) && key == "c" {
             cx.write_to_clipboard(gpui::ClipboardItem::new_string(self.text.clone()));
             cx.stop_propagation();
             return;
@@ -642,6 +643,14 @@ impl ScrollbackField {
             self.insert_digits(digit, cx);
             cx.stop_propagation();
         }
+    }
+}
+
+fn edit_modifier(modifiers: &gpui::Modifiers) -> bool {
+    if cfg!(target_os = "macos") {
+        modifiers.platform
+    } else {
+        modifiers.control && !modifiers.shift && !modifiers.alt
     }
 }
 

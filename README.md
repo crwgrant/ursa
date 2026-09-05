@@ -21,8 +21,8 @@ A native terminal with a reliable bearing, built in Rust with [GPUI](https://git
 - About window (**Ursa → About Ursa**) with the version, app icon, and a link to the GitHub repository
 - **Settings → Session sidebar → Off** hides the sessions list and session shortcuts; only horizontal tabs remain. **Keep sessions** still restores that one session’s tabs and panes
 - **Settings → Sessions → Keep sessions** restores sessions, tabs, split panes, working directories, and on-screen text on reopen, and keeps a tab open if its shell exits. **Close sessions** starts fresh and does not save previous sessions
-- New window with **⌘N** or **File → New Window**; closing the last session leaves the app running so a Dock click (or ⌘N) can open another
-- Typing `exit` in the top-level shell closes that pane unless **Keep sessions** is on. The last pane in a tab closes the tab; the last tab in a session closes the session; the last session closes the window without quitting the app
+- New window with **⌘N** or **File → New Window**; closing the last session leaves the app running on macOS so a Dock click (or ⌘N) can open another. On Windows, closing the last window quits the app
+- Typing `exit` in the top-level shell closes that pane unless **Keep sessions** is on. The last pane in a tab closes the tab; the last tab in a session closes the session; the last session closes the window (and on Windows, quits the app)
 
 ## Requirements
 
@@ -82,7 +82,7 @@ cargo install cargo-packager --locked
 | Clear screen | ⌘K |
 | Settings | ⌘, |
 
-On Windows, use **Ctrl+Shift** in place of **⌘** (for example **Ctrl+Shift+T** for a new tab, **Ctrl+Alt+T** for a new session, **Ctrl+Alt+W** to close a session, **Ctrl+Shift+1–9** to switch tabs, **Ctrl+1–9** to switch sessions, **Ctrl+Shift+C** / **Ctrl+Shift+V** to copy and paste, **Ctrl+Shift+D** to split right, **Ctrl+Alt+D** to split down, **Ctrl+Shift+] / Ctrl+Shift+[** to move pane focus). **Ctrl+C** still goes to the shell. Settings is **Ctrl+,**.
+On Windows, use **Ctrl+Shift** in place of **⌘** (for example **Ctrl+Shift+T** for a new tab, **Ctrl+Alt+T** for a new session, **Ctrl+Alt+W** to close a session, **Ctrl+Shift+1–9** to switch tabs, **Ctrl+1–9** to switch sessions, **Ctrl+Shift+C** / **Ctrl+Shift+V** to copy and paste, **Ctrl+Shift+D** to split right, **Ctrl+Alt+D** to split down, **Ctrl+Shift+] / Ctrl+Shift+[** to move pane focus). **Ctrl+C** still goes to the shell. Settings is **Ctrl+,**. New window is **Ctrl+N**, quit is **Ctrl+Q**, clear screen is **Ctrl+Shift+K**, and **Ctrl-click** opens a URL or folder.
 
 ## Configuration
 
@@ -163,6 +163,16 @@ The Settings window writes `config.toml` when you change a value. Editing the co
 - [x] Settings UI and config file owned by Ursa (not libghostty): a basic menu or window plus a user-editable file for common options as we add them
 - [x] Font family, size, cursor style, scrollback length, and app theme
 - [ ] Input and click behavior (including ⌘-click file vs folder)
+
+### Windows
+
+- [ ] Document and ship an NSIS installer (`cargo packager --release` on Windows)
+- [ ] CI that builds a Windows installer
+- [ ] Code-sign the `.exe` so SmartScreen does not warn on first run
+- [ ] Optional `%APPDATA%\Ursa` config location (today `~/.config/ursa`, or `XDG_CONFIG_HOME`)
+- [ ] Fall back to Segoe UI if `.SystemUIFont` does not resolve for chrome
+- [ ] Windows-native line/word editing in the terminal (Home/End and Ctrl+arrows already come from the shell)
+- [ ] Taskbar jump lists / pin-to-Start via the installer shortcut
 
 ### Later
 

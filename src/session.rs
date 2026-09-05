@@ -424,7 +424,7 @@ impl Session {
             return;
         }
         self.dismiss_link_menu(cx);
-        if event.modifiers.platform {
+        if link_modifier(&event.modifiers) {
             if let Some(hit) = self
                 .pointer_at(event.position)
                 .and_then(|pointer| self.frame.link_at(pointer.row, pointer.col))
@@ -444,7 +444,7 @@ impl Session {
     }
 
     fn handle_mouse_move(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
-        self.update_link_hover(event.position, event.modifiers.platform, cx);
+        self.update_link_hover(event.position, link_modifier(&event.modifiers), cx);
         if !self.selecting {
             return;
         }
@@ -459,7 +459,7 @@ impl Session {
     }
 
     fn handle_modifiers(&mut self, event: &ModifiersChangedEvent, window: &mut Window, cx: &mut Context<Self>) {
-        self.update_link_hover(window.mouse_position(), event.modifiers.platform, cx);
+        self.update_link_hover(window.mouse_position(), link_modifier(&event.modifiers), cx);
     }
 
     fn update_link_hover(&mut self, position: gpui::Point<Pixels>, cmd: bool, cx: &mut Context<Self>) {
@@ -770,21 +770,37 @@ pub fn clipboard_has_text(cx: &App) -> bool {
         .is_some_and(|text| !text.is_empty())
 }
 
+fn link_modifier(modifiers: &gpui::Modifiers) -> bool {
+    if cfg!(target_os = "macos") {
+        modifiers.platform
+    } else {
+        modifiers.control && !modifiers.shift && !modifiers.alt
+    }
+}
+
 fn reserved_shortcut(modifiers: &gpui::Modifiers, key: &str, cx: &App) -> bool {
-    let digit = matches!(key, "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9");
+    reserved_app_shortcut(modifiers, key) || (modifiers.control && is_digit_key(key) && crate::config::sessions_enabled(cx))
+}
+
+fn reserved_app_shortcut(modifiers: &gpui::Modifiers, key: &str) -> bool {
+    let digit = is_digit_key(key);
     if modifiers.platform && (matches!(key, "q" | "t" | "w" | "n" | "c" | "v" | "k" | "d" | "[" | "]" | ",") || digit) {
         return true;
     }
-    if modifiers.control && modifiers.shift && (matches!(key, "t" | "w" | "c" | "v" | "d" | "[" | "]") || digit) {
+    if modifiers.control && modifiers.shift && (matches!(key, "t" | "w" | "c" | "v" | "d" | "k" | "[" | "]") || digit) {
         return true;
     }
     if modifiers.control && modifiers.alt && matches!(key, "t" | "w" | "d") {
         return true;
     }
-    if modifiers.control && key == "," {
+    if modifiers.control && matches!(key, "n" | "q" | ",") {
         return true;
     }
-    modifiers.control && digit && crate::config::sessions_enabled(cx)
+    false
+}
+
+fn is_digit_key(key: &str) -> bool {
+    matches!(key, "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
 }
 
 fn exited_banner(colors: theme::Colors) -> impl IntoElement {
@@ -1207,5 +1223,57 @@ fn write_paste(pty: &PtyIo, terminal: &Terminal, text: String) {
                 break;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_digit_key, link_modifier, reserved_app_shortcut};
+    use gpui::Modifiers;
+
+    #[test]
+    fn link_modifier_is_ctrl_without_shift_or_alt_off_macos() {
+        if cfg!(target_os = "macos") {
+            assert!(link_modifier(&Modifiers {
+                platform: true,
+                ..Modifiers::default()
+            }));
+            return;
+        }
+        assert!(link_modifier(&Modifiers {
+            control: true,
+            ..Modifiers::default()
+        }));
+        assert!(!link_modifier(&Modifiers {
+            control: true,
+            shift: true,
+            ..Modifiers::default()
+        }));
+        assert!(!link_modifier(&Modifiers {
+            platform: true,
+            ..Modifiers::default()
+        }));
+    }
+
+    #[test]
+    fn reserved_shortcuts_include_windows_new_window_quit_and_clear() {
+        let ctrl_n = Modifiers {
+            control: true,
+            ..Modifiers::default()
+        };
+        let ctrl_q = Modifiers {
+            control: true,
+            ..Modifiers::default()
+        };
+        let ctrl_shift_k = Modifiers {
+            control: true,
+            shift: true,
+            ..Modifiers::default()
+        };
+        assert!(reserved_app_shortcut(&ctrl_n, "n"));
+        assert!(reserved_app_shortcut(&ctrl_q, "q"));
+        assert!(reserved_app_shortcut(&ctrl_shift_k, "k"));
+        assert!(!reserved_app_shortcut(&ctrl_n, "k"));
+        assert!(is_digit_key("3"));
     }
 }
