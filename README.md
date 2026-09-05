@@ -72,20 +72,18 @@ size = 13
 
 [appearance]
 theme = "nord"
-themes = "themes.toml"
+themes = "themes"
 
 [terminal]
 scrollback_lines = 2000
 cursor = "bar" # or "block"
 ```
 
-`theme` is the name of a table in the themes file, or a Ghostty theme dropped in `themes/`. Built-in defaults include `nord`, `one-dark`, `tokyo-night`, `catppuccin-mocha`, `gruvbox-dark`, `solarized-light`, and `catppuccin-frappe`. `themes` is a path to the TOML catalog: relative to `config.toml`, or absolute.
+`theme` is the filename stem of a Ghostty `.conf` in the themes folder (`nord`, `one-dark`, `tokyo-night`, `catppuccin-mocha`, `catppuccin-frappe`, `gruvbox-dark`, `solarized-light`). `themes` is that folder: relative to `config.toml`, or absolute.
 
-The default `themes.toml` is written next to `config.toml` on first launch if it is missing. Add a table per theme (`label`, chrome colors, `term_fg` / `term_bg` / `cursor`, and a 16-color `ansi` array). Colors are `0xRRGGBB` (or `"#rrggbb"`).
+The default `themes/` directory is written next to `config.toml` on first launch. Each file is a Ghostty theme (the format from [ghostty.org](https://ghostty.org/docs/features/theme)): `background`, `foreground`, `cursor-color`, and `palette = 0`–`15`. Ghostterm derives sidebar and tab colors from those values. Unknown keys are ignored, so files from [catppuccin/ghostty](https://github.com/catppuccin/ghostty) or iterm2-color-schemes can be copied in as-is.
 
-Ghostty theme files (the format from [ghostty.org](https://ghostty.org/docs/features/theme) or [catppuccin/ghostty](https://github.com/catppuccin/ghostty)) can be copied into a `themes/` folder next to `config.toml`. Ghostterm reads `background`, `foreground`, `cursor-color`, and `palette = 0`–`15`, then derives sidebar and tab colors. Unknown keys are ignored. A `catppuccin-frappe.conf` sample is written there on first launch.
-
-The Settings window writes `config.toml` when you change a value. Editing the config, `themes.toml`, or a file in `themes/` reloads within a couple of seconds (or immediately via **Reload**). Invalid TOML keeps the last good settings and shows a toast; a missing file uses the platform defaults. Unknown keys are ignored so older Ghostterm versions stay compatible.
+The Settings window writes `config.toml` when you change a value. Editing the config or a file in `themes/` reloads within a couple of seconds (or immediately via **Reload**). Invalid TOML keeps the last good settings and shows a toast; a missing file uses the platform defaults. Unknown keys are ignored so older Ghostterm versions stay compatible.
 
 ## Roadmap
 

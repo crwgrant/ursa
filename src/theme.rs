@@ -25,10 +25,8 @@ pub const SIDEBAR_WIDTH: f32 = 220.0;
 pub const TERMINAL_PAD: Pixels = px(8.0);
 
 pub const DEFAULT_THEME: &str = "nord";
-pub const DEFAULT_THEMES_FILE: &str = "themes.toml";
 pub const DEFAULT_THEMES_DIR: &str = "themes";
-pub const DEFAULT_THEMES_TOML: &str = include_str!("../themes.toml");
-pub const DEFAULT_FRAPPE_CONF: &str = include_str!("../themes/catppuccin-frappe.conf");
+pub const DEFAULT_THEMES_FILE: &str = DEFAULT_THEMES_DIR;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Colors {
@@ -150,17 +148,16 @@ pub fn extra_themes_dir(config_path: &Path) -> PathBuf {
 
 pub fn write_default(config_path: &Path, themes_file: &str) -> std::io::Result<()> {
     let catalog = resolved_path(config_path, themes_file);
-    if !catalog.exists() && catalog.extension().is_some() {
-        if let Some(dir) = catalog.parent() {
-            std::fs::create_dir_all(dir)?;
+    let dir = match catalog.extension().and_then(|ext| ext.to_str()) {
+        Some("toml" | "conf") => extra_themes_dir(config_path),
+        _ => catalog,
+    };
+    std::fs::create_dir_all(&dir)?;
+    for (name, contents) in bundled_theme_files() {
+        let path = dir.join(name);
+        if !path.exists() {
+            std::fs::write(path, contents)?;
         }
-        std::fs::write(&catalog, DEFAULT_THEMES_TOML)?;
-    }
-    let extra = extra_themes_dir(config_path);
-    std::fs::create_dir_all(&extra)?;
-    let sample = extra.join("catppuccin-frappe.conf");
-    if !sample.exists() {
-        std::fs::write(sample, DEFAULT_FRAPPE_CONF)?;
     }
     Ok(())
 }
@@ -321,8 +318,36 @@ fn embedded_catalog() -> ThemeCatalog {
     }
 }
 
+fn bundled_theme_files() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("catppuccin-frappe.conf", include_str!("../themes/catppuccin-frappe.conf")),
+        ("catppuccin-mocha.conf", include_str!("../themes/catppuccin-mocha.conf")),
+        ("gruvbox-dark.conf", include_str!("../themes/gruvbox-dark.conf")),
+        ("nord.conf", include_str!("../themes/nord.conf")),
+        ("one-dark.conf", include_str!("../themes/one-dark.conf")),
+        ("solarized-light.conf", include_str!("../themes/solarized-light.conf")),
+        ("tokyo-night.conf", include_str!("../themes/tokyo-night.conf")),
+    ]
+}
+
+#[cfg(test)]
+fn bundled_theme_text(name: &str) -> &'static str {
+    bundled_theme_files()
+        .iter()
+        .find(|(file, _)| *file == name)
+        .map(|(_, text)| *text)
+        .expect("bundled theme")
+}
+
 fn embedded_themes() -> Vec<ThemeEntry> {
-    parse(DEFAULT_THEMES_TOML).unwrap_or_else(|_| vec![fallback_entry()])
+    let mut themes = Vec::new();
+    for (name, text) in bundled_theme_files() {
+        let id = name.trim_end_matches(".conf");
+        if let Ok(theme) = parse_ghostty(text, id, &display_label(&normalize_id(id))) {
+            themes.push(theme);
+        }
+    }
+    if themes.is_empty() { vec![fallback_entry()] } else { themes }
 }
 
 fn load_theme_dir(dir: &Path, themes: &mut Vec<ThemeEntry>, errors: &mut Vec<String>) {
@@ -718,16 +743,19 @@ mod tests {
 
     #[test]
     fn default_file_loads_builtin_themes() {
-        let themes = parse(DEFAULT_THEMES_TOML).unwrap();
+        let themes = embedded_themes();
         let ids: Vec<_> = themes.iter().map(|theme| theme.id.as_str()).collect();
         assert!(ids.contains(&"tokyo-night"));
         assert!(ids.contains(&"one-dark"));
         assert!(ids.contains(&"nord"));
+        assert!(ids.contains(&"catppuccin-frappe"));
         let night = themes.iter().find(|theme| theme.id == "tokyo-night").unwrap();
         let nord = themes.iter().find(|theme| theme.id == "nord").unwrap();
         assert_eq!(night.label, "Tokyo Night");
         assert_ne!(night.colors.window, nord.colors.window);
         assert_eq!(night.colors.ansi.len(), 16);
+        assert_eq!(night.colors.term_bg, 0x1a1b26);
+        assert_eq!(nord.colors.term_bg, 0x2e3440);
     }
 
     #[test]
@@ -771,14 +799,15 @@ mod tests {
     #[test]
     fn resolved_path_joins_config_dir() {
         let config = PathBuf::from("/tmp/ghostterm/config.toml");
-        assert_eq!(resolved_path(&config, "themes.toml"), PathBuf::from("/tmp/ghostterm/themes.toml"));
+        assert_eq!(resolved_path(&config, "themes"), PathBuf::from("/tmp/ghostterm/themes"));
         assert_eq!(resolved_path(&config, "/abs/custom.toml"), PathBuf::from("/abs/custom.toml"));
         assert_eq!(extra_themes_dir(&config), PathBuf::from("/tmp/ghostterm/themes"));
     }
 
     #[test]
     fn parses_ghostty_frappe_and_derives_chrome() {
-        let theme = parse_ghostty(DEFAULT_FRAPPE_CONF, "Catppuccin Frappe", "Catppuccin Frappé").unwrap();
+        let theme =
+            parse_ghostty(bundled_theme_text("catppuccin-frappe.conf"), "Catppuccin Frappe", "Catppuccin Frappé").unwrap();
         assert_eq!(theme.id, "catppuccin-frappe");
         assert_eq!(theme.label, "Catppuccin Frappé");
         assert_eq!(theme.colors.term_bg, 0x303446);
@@ -826,9 +855,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("themes")).unwrap();
         let config = root.join("config.toml");
-        let catalog_path = root.join("themes.toml");
-        std::fs::write(&catalog_path, DEFAULT_THEMES_TOML).unwrap();
-        std::fs::write(root.join("themes/catppuccin-frappe.conf"), DEFAULT_FRAPPE_CONF).unwrap();
+        let catalog_path = root.join("themes");
+        std::fs::write(catalog_path.join("catppuccin-frappe.conf"), bundled_theme_text("catppuccin-frappe.conf")).unwrap();
+        std::fs::write(catalog_path.join("nord.conf"), bundled_theme_text("nord.conf")).unwrap();
         let catalog = load_catalog(&catalog_path, &config);
         let ids: Vec<_> = catalog.themes.iter().map(|theme| theme.id.as_str()).collect();
         assert!(ids.contains(&"nord"));

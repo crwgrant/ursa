@@ -121,9 +121,9 @@ family = {family}
 size = {size}
 
 [appearance]
-# Name of a table in the themes file, or a Ghostty theme in the themes/ folder.
+# Filename stem of a .conf in the themes folder (nord, one-dark, tokyo-night, …).
 theme = {theme}
-# TOML catalog (relative to this file or absolute). Ghostty .conf files are also loaded from themes/.
+# Folder of Ghostty theme files, relative to this file or an absolute path.
 themes = {themes}
 
 [terminal]
