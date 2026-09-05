@@ -106,6 +106,7 @@ The Settings window writes `config.toml` when you change a value. Editing the co
 ### Window and sessions
 
 - [x] New window (⌘N), including reopen from the Dock when no windows are open
+- [ ] Horizontal tabs for each session
 - [ ] Remember window position and size across launches
 - [ ] Draggable split to resize the tab sidebar vs the terminal
 - [ ] Drag to reorder tabs in the sidebar
