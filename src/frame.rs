@@ -890,6 +890,7 @@ fn paint_span_text(
             font_size,
             link_color,
             underline,
+            true,
             window,
             cx,
         );
@@ -938,6 +939,7 @@ fn paint_span_text(
                 font_size,
                 link_color,
                 underline,
+                false,
                 window,
                 cx,
             );
@@ -964,6 +966,7 @@ fn paint_shaped_run(
     font_size: Pixels,
     link_color: Hsla,
     underline: UnderlineStyle,
+    clip: bool,
     window: &mut Window,
     cx: &mut gpui::App,
 ) {
@@ -990,13 +993,17 @@ fn paint_shaped_run(
         }],
         force_width,
     );
-    let bounds = Bounds {
-        origin: point(x, y),
-        size: size(width, height),
-    };
-    window.with_content_mask(Some(ContentMask { bounds }), |window| {
+    if clip {
+        let bounds = Bounds {
+            origin: point(x, y),
+            size: size(width, height),
+        };
+        window.with_content_mask(Some(ContentMask { bounds }), |window| {
+            let _ = line.paint(point(x, y), height, window, cx);
+        });
+    } else {
         let _ = line.paint(point(x, y), height, window, cx);
-    });
+    }
 }
 
 pub fn terminal_font(cx: &gpui::App) -> Font {

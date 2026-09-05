@@ -60,7 +60,6 @@ enum Command {
         rectangle: bool,
     },
     SelectRelease(SelectPointer),
-    ClearSelection,
     Copy(flume::Sender<Option<String>>),
     Paste(String),
     ClearScreen,
@@ -192,14 +191,16 @@ impl Session {
                             Event::Title(title) if !title.is_empty() => {
                                 this.title = if this.exited { format!("{title} (exited)") } else { title };
                                 cx.emit(SessionEvent::TitleChanged);
+                                return;
                             }
-                            Event::Title(_) => {}
+                            Event::Title(_) => return,
                             Event::Pwd(cwd) => {
                                 this.remember_local_cwd();
                                 if this.cwd.as_ref() != Some(&cwd) {
                                     this.cwd = Some(cwd);
                                     cx.emit(SessionEvent::CwdChanged);
                                 }
+                                return;
                             }
                             Event::Exited => {
                                 this.mark_exited(cx);
@@ -413,7 +414,6 @@ impl Session {
         };
         self.used = true;
         self.restart_cursor_blink(cx);
-        let _ = self.commands.send(Command::ClearSelection);
         let _ = self.commands.send(Command::Key(encoded));
         true
     }
@@ -624,6 +624,7 @@ impl Render for Session {
         let colors = theme::colors(cx);
         let focus = self.focus.clone();
         let cursor_on = self.cursor_on;
+        let cell = self.cell_size;
 
         div()
             .id(("terminal", cx.entity_id().as_u64() as usize))
@@ -667,7 +668,6 @@ impl Render for Session {
                         }
                     },
                     move |bounds, _, window, cx| {
-                        let cell = frame::measure_cell(window, cx);
                         frame::paint(
                             &frame,
                             bounds,
@@ -971,16 +971,22 @@ fn run_emulator(
     let mut last_title = String::new();
     let mut last_cwd: Option<crate::cwd::TerminalCwd> = None;
     let mut encoded = Vec::new();
+    let mut painted_selection = false;
 
     while let Ok(command) = commands.recv() {
         let mut refresh_cwd = false;
+        let mut needs_frame = true;
         match command {
             Command::PtyBytes(bytes) => {
                 terminal.vt_write(&bytes);
                 refresh_cwd = true;
             }
             Command::Key(input) => {
-                let _ = terminal.set_selection(None);
+                needs_frame = painted_selection;
+                if painted_selection {
+                    let _ = terminal.set_selection(None);
+                    painted_selection = false;
+                }
                 encoded.clear();
                 if let Some(raw) = input.raw.as_deref() {
                     encoded.extend_from_slice(raw);
@@ -1030,10 +1036,6 @@ fn run_emulator(
             Command::SelectRelease(pointer) => {
                 apply_select_release(&mut terminal, &mut gesture, &mut release_event, pointer)?;
             }
-            Command::ClearSelection => {
-                gesture.reset(&terminal);
-                let _ = terminal.set_selection(None);
-            }
             Command::Copy(reply) => {
                 let text = selection_text(&terminal);
                 let _ = reply.send(text);
@@ -1063,6 +1065,7 @@ fn run_emulator(
                     crate::config::write_tab_snapshot(&path, &bytes);
                 }
                 refresh_cwd = true;
+                needs_frame = false;
                 if let Some(done) = done {
                     let _ = done.send(());
                 }
@@ -1089,8 +1092,13 @@ fn run_emulator(
             }
         }
 
+        if !needs_frame {
+            continue;
+        }
+
         match frame::capture(&terminal, &mut render_state, &mut row_it, &mut cell_it) {
             Ok(frame) => {
+                painted_selection = frame.has_selection;
                 if events.send(Event::Frame(frame)).is_err() {
                     break;
                 }

@@ -674,6 +674,7 @@ pub struct AppSettings {
     pub config: Config,
     pub path: PathBuf,
     pub load_error: Option<String>,
+    resolved_font: SharedString,
     mtime: Mutex<Option<SystemTime>>,
 }
 
@@ -685,6 +686,7 @@ impl Default for AppSettings {
             config: Config::default(),
             path: config_path().unwrap_or_else(|| PathBuf::from("config.toml")),
             load_error: None,
+            resolved_font: SharedString::from(theme::FONT_FAMILY),
             mtime: Mutex::new(None),
         }
     }
@@ -697,8 +699,10 @@ pub fn init(cx: &mut App) {
         config: loaded.config,
         path: loaded.path,
         load_error: loaded.error,
+        resolved_font: SharedString::from(theme::FONT_FAMILY),
         mtime: Mutex::new(loaded.mtime),
     });
+    refresh_resolved_font(cx);
     if let Some(error) = error {
         notify::show(cx, format!("Config file error: {error}"));
     }
@@ -714,8 +718,18 @@ pub fn current(cx: &App) -> Config {
 }
 
 pub fn font_family(cx: &App) -> SharedString {
-    let installed = cx.text_system().all_font_names();
-    SharedString::from(current(cx).resolved_font_family_from(&installed))
+    cx.try_global::<AppSettings>()
+        .map(|settings| settings.resolved_font.clone())
+        .unwrap_or_else(|| SharedString::from(theme::FONT_FAMILY))
+}
+
+fn refresh_resolved_font(cx: &mut App) {
+    if !cx.has_global::<AppSettings>() {
+        return;
+    }
+    let config = cx.global::<AppSettings>().config.clone();
+    let family = SharedString::from(config.resolved_font_family_from(&cx.text_system().all_font_names()));
+    cx.global_mut::<AppSettings>().resolved_font = family;
 }
 
 pub fn font_size(cx: &App) -> f32 {
@@ -1446,9 +1460,11 @@ fn persist(cx: &mut App, config: Config, write: bool) {
             config,
             path,
             load_error: error,
+            resolved_font: SharedString::from(theme::FONT_FAMILY),
             mtime: Mutex::new(mtime),
         });
     }
+    refresh_resolved_font(cx);
     theme::reload(cx);
 }
 
@@ -1464,9 +1480,11 @@ fn apply_loaded(cx: &mut App, loaded: Loaded) {
             config: loaded.config,
             path: loaded.path,
             load_error: loaded.error,
+            resolved_font: SharedString::from(theme::FONT_FAMILY),
             mtime: Mutex::new(loaded.mtime),
         });
     }
+    refresh_resolved_font(cx);
     theme::reload(cx);
 }
 
