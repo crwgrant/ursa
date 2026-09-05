@@ -558,13 +558,8 @@ impl Default for Config {
 }
 
 impl Config {
-    pub fn resolved_font_family(&self) -> String {
-        self.font_family
-            .as_deref()
-            .map(str::trim)
-            .filter(|family| !family.is_empty())
-            .unwrap_or(theme::FONT_FAMILY)
-            .to_string()
+    pub fn resolved_font_family_from(&self, installed: &[String]) -> String {
+        pick_font_family(self.font_family.as_deref(), installed)
     }
 
     pub fn sanitize(&mut self) {
@@ -590,7 +585,13 @@ impl Config {
     }
 
     pub fn render(&self) -> String {
-        let family = toml_string(&self.resolved_font_family());
+        let family = toml_string(
+            self.font_family
+                .as_deref()
+                .map(str::trim)
+                .filter(|family| !family.is_empty())
+                .unwrap_or(""),
+        );
         let size = format_number(self.font_size);
         format!(
             "\
@@ -599,7 +600,7 @@ impl Config {
 # Unknown keys are ignored so older Ghostterm versions stay compatible.
 
 [font]
-# Terminal typeface. Leave empty or omit to use the platform default.
+# Terminal typeface. Leave empty or omit to prefer NotoMono Nerd Font, then the OS mono font.
 family = {family}
 # Size in points ({FONT_SIZE_MIN:.0}–{FONT_SIZE_MAX:.0}).
 size = {size}
@@ -673,6 +674,7 @@ pub struct AppSettings {
     pub config: Config,
     pub path: PathBuf,
     pub load_error: Option<String>,
+    resolved_font: SharedString,
     mtime: Mutex<Option<SystemTime>>,
 }
 
@@ -684,6 +686,7 @@ impl Default for AppSettings {
             config: Config::default(),
             path: config_path().unwrap_or_else(|| PathBuf::from("config.toml")),
             load_error: None,
+            resolved_font: SharedString::from(theme::FONT_FAMILY),
             mtime: Mutex::new(None),
         }
     }
@@ -696,8 +699,10 @@ pub fn init(cx: &mut App) {
         config: loaded.config,
         path: loaded.path,
         load_error: loaded.error,
+        resolved_font: SharedString::from(theme::FONT_FAMILY),
         mtime: Mutex::new(loaded.mtime),
     });
+    refresh_resolved_font(cx);
     if let Some(error) = error {
         notify::show(cx, format!("Config file error: {error}"));
     }
@@ -713,7 +718,18 @@ pub fn current(cx: &App) -> Config {
 }
 
 pub fn font_family(cx: &App) -> SharedString {
-    SharedString::from(current(cx).resolved_font_family())
+    cx.try_global::<AppSettings>()
+        .map(|settings| settings.resolved_font.clone())
+        .unwrap_or_else(|| SharedString::from(theme::FONT_FAMILY))
+}
+
+fn refresh_resolved_font(cx: &mut App) {
+    if !cx.has_global::<AppSettings>() {
+        return;
+    }
+    let config = cx.global::<AppSettings>().config.clone();
+    let family = SharedString::from(config.resolved_font_family_from(&cx.text_system().all_font_names()));
+    cx.global_mut::<AppSettings>().resolved_font = family;
 }
 
 pub fn font_size(cx: &App) -> f32 {
@@ -896,18 +912,63 @@ pub fn font_size_choices(current: f32) -> Vec<f32> {
     choices
 }
 
+pub fn default_font_candidates() -> &'static [&'static str] {
+    &["NotoMono Nerd Font", "NotoMono Nerd Font Mono", theme::FONT_FAMILY]
+}
+
+pub fn pick_font_family(configured: Option<&str>, installed: &[String]) -> String {
+    let configured = configured.map(str::trim).filter(|family| !family.is_empty());
+    if installed.is_empty() {
+        return configured.unwrap_or(theme::FONT_FAMILY).to_string();
+    }
+    if let Some(family) = configured {
+        if let Some(name) = match_installed_font(installed, family) {
+            return name;
+        }
+    }
+    for candidate in default_font_candidates() {
+        if let Some(name) = match_installed_font(installed, candidate) {
+            return name;
+        }
+    }
+    theme::FONT_FAMILY.to_string()
+}
+
+fn match_installed_font(installed: &[String], name: &str) -> Option<String> {
+    installed.iter().find(|family| family.eq_ignore_ascii_case(name)).cloned()
+}
+
 pub fn font_presets() -> &'static [&'static str] {
     #[cfg(target_os = "macos")]
     {
-        &["Menlo", "Monaco", "SF Mono", "Courier", "JetBrains Mono"]
+        &[
+            "NotoMono Nerd Font",
+            "NotoMono Nerd Font Mono",
+            "Menlo",
+            "Monaco",
+            "SF Mono",
+            "Courier",
+        ]
     }
     #[cfg(target_os = "windows")]
     {
-        &["Cascadia Mono", "Consolas", "Courier New", "JetBrains Mono"]
+        &[
+            "NotoMono Nerd Font",
+            "NotoMono Nerd Font Mono",
+            "Cascadia Mono",
+            "Consolas",
+            "Courier New",
+        ]
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        &["monospace", "DejaVu Sans Mono", "JetBrains Mono", "Noto Sans Mono"]
+        &[
+            "NotoMono Nerd Font",
+            "NotoMono Nerd Font Mono",
+            "Noto Sans Mono",
+            "DejaVu Sans Mono",
+            "monospace",
+        ]
     }
 }
 
@@ -1399,9 +1460,11 @@ fn persist(cx: &mut App, config: Config, write: bool) {
             config,
             path,
             load_error: error,
+            resolved_font: SharedString::from(theme::FONT_FAMILY),
             mtime: Mutex::new(mtime),
         });
     }
+    refresh_resolved_font(cx);
     theme::reload(cx);
 }
 
@@ -1417,9 +1480,11 @@ fn apply_loaded(cx: &mut App, loaded: Loaded) {
             config: loaded.config,
             path: loaded.path,
             load_error: loaded.error,
+            resolved_font: SharedString::from(theme::FONT_FAMILY),
             mtime: Mutex::new(loaded.mtime),
         });
     }
+    refresh_resolved_font(cx);
     theme::reload(cx);
 }
 
@@ -1576,8 +1641,28 @@ mod tests {
     #[test]
     fn empty_family_uses_platform_default() {
         let config = parse("[font]\nfamily = \"  \"\n").unwrap();
-        assert_eq!(config.resolved_font_family(), theme::FONT_FAMILY);
+        assert_eq!(config.resolved_font_family_from(&[]), theme::FONT_FAMILY);
         assert_eq!(config.font_family, None);
+    }
+
+    #[test]
+    fn picks_notomono_when_installed_else_os_font() {
+        let installed = vec!["Menlo".into(), "NotoMono Nerd Font".into()];
+        assert_eq!(pick_font_family(None, &installed), "NotoMono Nerd Font");
+        assert_eq!(pick_font_family(None, &["Menlo".into()]), "Menlo");
+        assert_eq!(
+            pick_font_family(Some("SF Mono"), &["sf mono".into(), "NotoMono Nerd Font".into()]),
+            "sf mono"
+        );
+        assert_eq!(pick_font_family(Some("Missing Font"), &installed), "NotoMono Nerd Font");
+        assert_eq!(pick_font_family(None, &[]), theme::FONT_FAMILY);
+    }
+
+    #[test]
+    fn default_render_leaves_family_empty() {
+        let rendered = Config::default().render();
+        assert!(rendered.contains("family = \"\""));
+        assert_eq!(parse(&rendered).unwrap().font_family, None);
     }
 
     #[test]
@@ -1593,7 +1678,7 @@ mod tests {
             themes_file: "palettes.toml".into(),
         };
         let again = parse(&original.render()).unwrap();
-        assert_eq!(again.resolved_font_family(), "SF Mono");
+        assert_eq!(again.resolved_font_family_from(&[]), "SF Mono");
         assert_eq!(again.font_size, 15.0);
         assert_eq!(again.scrollback_lines, 4000);
         assert_eq!(again.cursor_shape, CursorShape::Bar);

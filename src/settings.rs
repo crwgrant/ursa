@@ -186,7 +186,7 @@ fn window_options(cx: &App, display_id: Option<DisplayId>) -> WindowOptions {
 impl Render for SettingsPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let config = config::current(cx);
-        let family = config.resolved_font_family();
+        let family = config::font_family(cx).to_string();
         let font_size = config.font_size;
         let cursor_shape = config.cursor_shape;
         let on_exit = config.on_exit;
