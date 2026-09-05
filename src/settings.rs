@@ -1,9 +1,9 @@
 use std::time::Duration;
 
 use gpui::{
-    Animation, AnimationExt as _, AnyElement, App, Bounds, Context, Corner, CursorStyle, Entity, FocusHandle, Focusable, Global,
-    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, ParentElement, Pixels, Render, Styled,
-    TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, anchored, div, prelude::*, px, rgb, size,
+    Animation, AnimationExt as _, AnyElement, App, Bounds, Context, Corner, CursorStyle, DisplayId, Entity, FocusHandle,
+    Focusable, Global, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, ParentElement, Pixels, Render,
+    Styled, TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, anchored, div, prelude::*, px, rgb, size,
 };
 
 use crate::{config, notify, theme};
@@ -115,7 +115,8 @@ pub fn open(cx: &mut App) {
         }
     }
 
-    match cx.open_window(window_options(cx), |window, cx| cx.new(|cx| SettingsPage::new(window, cx))) {
+    let display_id = host_display_id(cx);
+    match cx.open_window(window_options(cx, display_id), |window, cx| cx.new(|cx| SettingsPage::new(window, cx))) {
         Ok(handle) => {
             let _ = handle.update(cx, |_, window, cx| {
                 window.on_window_should_close(cx, |_, cx| {
@@ -131,8 +132,17 @@ pub fn open(cx: &mut App) {
     }
 }
 
-fn window_options(cx: &App) -> WindowOptions {
-    let bounds = Bounds::centered(None, size(px(520.0), px(640.0)), cx);
+fn host_display_id(cx: &mut App) -> Option<DisplayId> {
+    cx.active_window().and_then(|handle| {
+        handle
+            .update(cx, |_, window, cx| window.display(cx).map(|display| display.id()))
+            .ok()
+            .flatten()
+    })
+}
+
+fn window_options(cx: &App, display_id: Option<DisplayId>) -> WindowOptions {
+    let bounds = Bounds::centered(display_id, size(px(520.0), px(640.0)), cx);
     WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: Some(TitlebarOptions {
@@ -144,7 +154,7 @@ fn window_options(cx: &App) -> WindowOptions {
         show: true,
         kind: gpui::WindowKind::Normal,
         is_movable: true,
-        display_id: None,
+        display_id,
         window_min_size: Some(size(px(420.0), px(600.0))),
         window_background: gpui::WindowBackgroundAppearance::Opaque,
         app_id: Some(crate::APP_ID.into()),
