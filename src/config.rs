@@ -558,10 +558,6 @@ impl Default for Config {
 }
 
 impl Config {
-    pub fn resolved_font_family(&self) -> String {
-        pick_font_family(self.font_family.as_deref(), &[])
-    }
-
     pub fn resolved_font_family_from(&self, installed: &[String]) -> String {
         pick_font_family(self.font_family.as_deref(), installed)
     }
@@ -1627,7 +1623,7 @@ mod tests {
     #[test]
     fn empty_family_uses_platform_default() {
         let config = parse("[font]\nfamily = \"  \"\n").unwrap();
-        assert_eq!(config.resolved_font_family(), theme::FONT_FAMILY);
+        assert_eq!(config.resolved_font_family_from(&[]), theme::FONT_FAMILY);
         assert_eq!(config.font_family, None);
     }
 
@@ -1664,7 +1660,7 @@ mod tests {
             themes_file: "palettes.toml".into(),
         };
         let again = parse(&original.render()).unwrap();
-        assert_eq!(again.resolved_font_family(), "SF Mono");
+        assert_eq!(again.resolved_font_family_from(&[]), "SF Mono");
         assert_eq!(again.font_size, 15.0);
         assert_eq!(again.scrollback_lines, 4000);
         assert_eq!(again.cursor_shape, CursorShape::Bar);
