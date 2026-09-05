@@ -360,7 +360,7 @@ fn cursor_row(shape: config::CursorShape, cx: &mut Context<SettingsPage>) -> imp
 }
 
 fn on_exit_row(on_exit: config::OnExit, cx: &mut Context<SettingsPage>) -> impl IntoElement {
-    dropdown_row("on-exit", "When shell exits", on_exit.label().to_string(), MenuKind::OnExit, cx)
+    dropdown_row("on-exit", "Sessions", on_exit.label().to_string(), MenuKind::OnExit, cx)
 }
 
 fn theme_row(app_theme: String, cx: &mut Context<SettingsPage>) -> impl IntoElement {

@@ -147,7 +147,7 @@ impl Render for SplitDragPreview {
 impl Workspace {
     fn new(restore: bool, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let layout = if restore {
-            config::restored_workspace_layout()
+            config::restored_workspace_layout(cx)
         } else {
             config::WorkspaceLayout::default()
         };
@@ -179,6 +179,11 @@ impl Workspace {
         cx.observe_global::<notify::Notifications>(|_, cx| cx.notify()).detach();
         cx.observe_global::<config::AppSettings>(|this, cx| {
             this.apply_config(cx);
+            if config::persist_sessions(cx) {
+                this.persist_layout(cx);
+            } else {
+                config::discard_workspace_layout();
+            }
             cx.notify();
         })
         .detach();
@@ -430,7 +435,7 @@ impl Workspace {
             .first()
             .map(|group| (group.tabs.len(), group.tabs.first().is_some_and(|tab| tab.read(cx).used)))
             .unwrap_or((0, false));
-        if is_fresh_workspace(self.sessions.len(), tab_count, used) {
+        if !config::persist_sessions(cx) || is_fresh_workspace(self.sessions.len(), tab_count, used) {
             config::save_workspace_layout(config::WorkspaceLayout::default());
             config::clear_tab_snapshots();
             return;

@@ -360,8 +360,8 @@ impl OnExit {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Close => "Close tab",
-            Self::Keep => "Keep tab open",
+            Self::Close => "Close sessions",
+            Self::Keep => "Keep sessions",
         }
     }
 
@@ -461,7 +461,7 @@ themes = {themes}
 scrollback_lines = {scrollback}
 # Cursor shape: block or bar.
 cursor = {cursor}
-# When the top-level shell exits: close the tab, or keep it open.
+# Keep sessions across relaunch (and keep a tab open if its shell exits), or close them.
 on_exit = {on_exit}
 ",
             theme = toml_string(&self.theme),
@@ -571,6 +571,10 @@ pub fn cursor_shape(cx: &App) -> CursorShape {
 }
 
 pub fn keep_tab_on_exit(cx: &App) -> bool {
+    persist_sessions(cx)
+}
+
+pub fn persist_sessions(cx: &App) -> bool {
     current(cx).on_exit == OnExit::Keep
 }
 
@@ -779,7 +783,15 @@ pub fn restored_sidebar_width() -> f32 {
         .unwrap_or(theme::SIDEBAR_WIDTH)
 }
 
-pub fn restored_workspace_layout() -> WorkspaceLayout {
+pub fn discard_workspace_layout() {
+    save_workspace_layout(WorkspaceLayout::default());
+    clear_tab_snapshots();
+}
+
+pub fn restored_workspace_layout(cx: &App) -> WorkspaceLayout {
+    if !persist_sessions(cx) {
+        return WorkspaceLayout::default();
+    }
     pending_workspace_layout()
         .or_else(|| {
             load_window_frame().map(|frame| {

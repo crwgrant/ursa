@@ -14,10 +14,10 @@ A terminal emulator built in Rust with [GPUI](https://github.com/zed-industries/
 - Right-click a URL, URI, or path for **Copy**, **Paste**, and **Open Link** (or **Open Folder**)
 - In-app toasts for copy and paste feedback (bottom-right, click or wait to dismiss)
 - **⌘K** clears the screen and scrollback; the shell redraws the prompt at the top
-- Settings window (**⌘,** or **Ghostterm → Settings**) for theme, font family, size, cursor style, scrollback, and whether a tab stays open after the shell exits; values are stored in a Ghostterm-owned config file you can also edit by hand
-- Reopening the app restores sessions, tabs, each tab’s working directory, and the text that was on screen
+- Settings window (**⌘,** or **Ghostterm → Settings**) for theme, font family, size, cursor style, scrollback, and whether sessions are kept; values are stored in a Ghostterm-owned config file you can also edit by hand
+- **Settings → Sessions → Keep sessions** restores sessions, tabs, working directories, and on-screen text on reopen, and keeps a tab open if its shell exits. **Close sessions** starts fresh and does not save previous sessions
 - New window with **⌘N** or **File → New Window**; closing the last session leaves the app running so a Dock click (or ⌘N) can open another
-- Typing `exit` in the top-level shell closes that tab by default; **Settings → When shell exits** can keep the tab open instead. The last tab in a session closes the session; the last session closes the window without quitting the app
+- Typing `exit` in the top-level shell closes that tab unless **Keep sessions** is on. The last tab in a session closes the session; the last session closes the window without quitting the app
 
 ## Requirements
 
@@ -71,7 +71,7 @@ Ghostterm reads a TOML file it owns (not libghostty). The file is created the fi
 
 If `XDG_CONFIG_HOME` is set, that directory is used instead of `~/.config`. An existing folder at the previous locations (`~/Library/Application Support/Ghostterm` on macOS, `%APPDATA%\Ghostterm` on Windows) is still used until you move it.
 
-Window position, size, which monitor it was on, the sidebar split width, and the session/tab layout are stored separately in `window.toml` in the same folder, so moving or resizing the app does not rewrite `config.toml`. Extra windows opened with ⌘N are offset from that saved frame and start with one session. If that monitor is unplugged, the window is centered on the current screen. Drag the border between the sessions list and the terminal to resize; double-click it or use **Reset to Defaults** in Settings to restore the 220px width. Reopening the app restores the last sessions and tabs, each tab’s working directory, and the text that was on screen. A new shell starts in that directory (running commands are not resumed). Screen snapshots live in `state/` next to `window.toml`. Quitting with only an unused session (or after closing the others and leaving a fresh tab) starts clean on the next launch.
+Window position, size, which monitor it was on, the sidebar split width, and the session/tab layout are stored separately in `window.toml` in the same folder, so moving or resizing the app does not rewrite `config.toml`. Extra windows opened with ⌘N are offset from that saved frame and start with one session. If that monitor is unplugged, the window is centered on the current screen. Drag the border between the sessions list and the terminal to resize; double-click it or use **Reset to Defaults** in Settings to restore the 220px width. With **Keep sessions**, reopening restores the last sessions and tabs, each tab’s working directory, and the text that was on screen. A new shell starts in that directory (running commands are not resumed). Screen snapshots live in `state/` next to `window.toml`. **Close sessions** (the default) and quitting with only an unused tab both start clean on the next launch.
 
 ```toml
 [font]
@@ -85,7 +85,7 @@ themes = "themes"
 [terminal]
 scrollback_lines = 2000
 cursor = "bar" # or "block"
-on_exit = "close" # or "keep"
+on_exit = "close" # or "keep" — close sessions on quit, or keep and restore them
 ```
 
 `theme` is the filename stem of a Ghostty `.conf` in the themes folder (`nord`, `one-dark`, `tokyo-night`, `catppuccin-mocha`, `catppuccin-frappe`, `gruvbox-dark`, `solarized-light`). `themes` is that folder: relative to `config.toml`, or absolute.
@@ -171,7 +171,7 @@ Config parse/round-trip tests live in `src/config.rs` (`cargo test`). A broader 
 - Last tab in a session closes the session; last session closes the window without quitting the app
 - Nested `exit` (subshell) does not close the tab
 - Adding and closing sessions and tabs updates the active index
-- Reopening the app restores tab counts, each tab’s working directory, and on-screen history
+- `on_exit = "keep"` restores sessions on relaunch; `on_exit = "close"` does not save them
 - Quitting with only an unused session does not restore that tab
 - ⌘N opens another window; Dock click with no windows opens one too
 
