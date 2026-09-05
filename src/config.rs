@@ -405,6 +405,27 @@ pub fn config_path() -> Option<PathBuf> {
 }
 
 fn config_dir() -> Option<PathBuf> {
+    let preferred =
+        preferred_config_dir(pty::home_dir().as_deref(), std::env::var_os("XDG_CONFIG_HOME").as_deref().map(Path::new))?;
+    if preferred.exists() {
+        return Some(preferred);
+    }
+    if let Some(legacy) = legacy_config_dir() {
+        if legacy.exists() {
+            return Some(legacy);
+        }
+    }
+    Some(preferred)
+}
+
+fn preferred_config_dir(home: Option<&Path>, xdg_config_home: Option<&Path>) -> Option<PathBuf> {
+    xdg_config_home
+        .map(Path::to_path_buf)
+        .or_else(|| home.map(|home| home.join(".config")))
+        .map(|root| root.join("ghostterm"))
+}
+
+fn legacy_config_dir() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
         pty::home_dir().map(|home| home.join("Library/Application Support/Ghostterm"))
@@ -415,10 +436,7 @@ fn config_dir() -> Option<PathBuf> {
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .or_else(|| pty::home_dir().map(|home| home.join(".config")))
-            .map(|root| root.join("ghostterm"))
+        None
     }
 }
 
@@ -734,5 +752,19 @@ mod tests {
         assert_eq!(parse("theme = \"nord\"\n[appearance]\ntheme = \"one-dark\"\n").unwrap().theme, "one-dark");
         assert_eq!(parse("[appearance]\ntheme = \"nope\"\n").unwrap().theme, "nope");
         assert_eq!(parse("[appearance]\nthemes = \"custom.toml\"\n").unwrap().themes_file, "custom.toml");
+    }
+
+    #[test]
+    fn default_config_dir_is_xdg() {
+        let home = PathBuf::from("/Users/dev");
+        assert_eq!(
+            preferred_config_dir(Some(&home), None).as_deref(),
+            Some(Path::new("/Users/dev/.config/ghostterm"))
+        );
+        assert_eq!(
+            preferred_config_dir(Some(&home), Some(Path::new("/custom/xdg"))).as_deref(),
+            Some(Path::new("/custom/xdg/ghostterm"))
+        );
+        assert_eq!(preferred_config_dir(None, None), None);
     }
 }
