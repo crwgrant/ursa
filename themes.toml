@@ -1,7 +1,7 @@
 # Ghostterm color themes.
 # Referenced from config.toml as:
 #   [appearance]
-#   theme = "tokyo-night"
+#   theme = "nord"
 #   themes = "themes.toml"
 #
 # Add a table per theme. Colors are 0xRRGGBB. `ansi` is the 16-color

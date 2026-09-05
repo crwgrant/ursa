@@ -24,7 +24,7 @@ pub const LINE_HEIGHT: f32 = 1.35;
 pub const SIDEBAR_WIDTH: f32 = 220.0;
 pub const TERMINAL_PAD: Pixels = px(8.0);
 
-pub const DEFAULT_THEME: &str = "tokyo-night";
+pub const DEFAULT_THEME: &str = "nord";
 pub const DEFAULT_THEMES_FILE: &str = "themes.toml";
 pub const DEFAULT_THEMES_TOML: &str = include_str!("../themes.toml");
 
@@ -239,29 +239,29 @@ fn embedded_catalog() -> ThemeCatalog {
 fn fallback_entry() -> ThemeEntry {
     ThemeEntry {
         id: DEFAULT_THEME.into(),
-        label: "Tokyo Night".into(),
+        label: "Nord".into(),
         colors: fallback_colors(),
     }
 }
 
 fn fallback_colors() -> Colors {
     Colors {
-        window: 0x0f1115,
-        sidebar: 0x14161c,
-        sidebar_border: 0x2a2d35,
-        tab_hover: 0x1d212b,
-        tab_active: 0x2a3140,
-        accent: 0x7aa2f7,
-        text: 0xc0caf5,
-        text_dim: 0x7a8299,
-        cursor: 0xc0caf5,
-        button: 0x1f2430,
-        tooltip: 0x232833,
-        term_fg: 0xc0caf5,
-        term_bg: 0x1a1b26,
+        window: 0x2e3440,
+        sidebar: 0x3b4252,
+        sidebar_border: 0x4c566a,
+        tab_hover: 0x434c5e,
+        tab_active: 0x4c566a,
+        accent: 0x88c0d0,
+        text: 0xeceff4,
+        text_dim: 0x81a1c1,
+        cursor: 0xd8dee9,
+        button: 0x434c5e,
+        tooltip: 0x3b4252,
+        term_fg: 0xd8dee9,
+        term_bg: 0x2e3440,
         ansi: [
-            0x15161e, 0xf7768e, 0x9ece6a, 0xe0af68, 0x7aa2f7, 0xbb9af7, 0x7dcfff, 0xa9b1d6, 0x414868, 0xf7768e, 0x9ece6a,
-            0xe0af68, 0x7aa2f7, 0xbb9af7, 0x7dcfff, 0xc0caf5,
+            0x3b4252, 0xbf616a, 0xa3be8c, 0xebcb8b, 0x81a1c1, 0xb48ead, 0x88c0d0, 0xe5e9f0, 0x4c566a, 0xbf616a, 0xa3be8c,
+            0xebcb8b, 0x81a1c1, 0xb48ead, 0x8fbcbb, 0xeceff4,
         ],
     }
 }
@@ -430,7 +430,7 @@ mod tests {
     #[test]
     fn lookup_uses_default_when_missing() {
         let catalog = embedded_catalog();
-        assert_eq!(catalog.lookup("tokyo-night").window, catalog.lookup("nope").window);
+        assert_eq!(catalog.lookup("nord").window, catalog.lookup("nope").window);
         assert_eq!(normalize_id("One Dark"), "one-dark");
         assert_eq!(normalize_id("  "), DEFAULT_THEME);
     }

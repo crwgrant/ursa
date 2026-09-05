@@ -121,7 +121,7 @@ family = {family}
 size = {size}
 
 [appearance]
-# Name of a table in the themes file. Built-in defaults include tokyo-night, one-dark, and nord.
+# Name of a table in the themes file. Built-in defaults include nord, one-dark, and tokyo-night.
 theme = {theme}
 # Color catalog, relative to this file or an absolute path.
 themes = {themes}
