@@ -2,7 +2,7 @@
 set -euo pipefail
 
 cd "${0:A:h}"
-tmp="$(mktemp -d /tmp/Skiff.XXXXXX)"
+tmp="$(mktemp -d /tmp/Ursa.XXXXXX)"
 iconset="$tmp/AppIcon.iconset"
 mkdir -p "$iconset"
 trap 'rm -rf "$tmp"' EXIT

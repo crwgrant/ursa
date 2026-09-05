@@ -2,12 +2,12 @@
 name = "rust-libghostty-terminal"
 version = "0.1.0"
 edition = "2021"
-description = "A GPUI terminal emulator powered by libghostty-vt"
+description = "A native terminal with a reliable bearing"
 license = "MIT OR Apache-2.0"
 
 [package.metadata.packager]
-product-name = "Skiff"
-identifier = "com.crwgrant.skiff"
+product-name = "Ursa"
+identifier = "com.crwgrant.ursa"
 before-packaging-command = "cargo build --release"
 icons = ["packaging/AppIcon.icns"]
 

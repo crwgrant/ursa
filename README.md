@@ -1,6 +1,6 @@
-# Skiff
+# Ursa
 
-A fast terminal for local and remote work, built in Rust with [GPUI](https://github.com/zed-industries/zed) and [libghostty-vt](https://github.com/uzaaft/libghostty-rs). Each window can show a left sidebar of sessions; each session has horizontal tabs, and each tab can split into panes that each talk to your login shell over a PTY. **Settings → Session sidebar** can hide the list so the window is only horizontal tabs.
+A native terminal with a reliable bearing, built in Rust with [GPUI](https://github.com/zed-industries/zed) and [libghostty-vt](https://github.com/uzaaft/libghostty-rs). Each window can show a left sidebar of sessions; each session has horizontal tabs, and each tab can split into panes that each talk to your login shell over a PTY. **Settings → Session sidebar** can hide the list so the window is only horizontal tabs.
 
 ## Features
 
@@ -15,7 +15,7 @@ A fast terminal for local and remote work, built in Rust with [GPUI](https://git
 - Right-click a URL, URI, or path for **Copy**, **Paste**, and **Open Link** (or **Open Folder**)
 - In-app toasts for copy and paste feedback (bottom-right, click or wait to dismiss)
 - **⌘K** clears the screen and scrollback; the shell redraws the prompt at the top
-- Settings window (**⌘,** or **Skiff → Settings**) for theme, font family, size, cursor style, scrollback, session restore, and the session sidebar; values are stored in a Skiff-owned config file you can also edit by hand
+- Settings window (**⌘,** or **Ursa → Settings**) for theme, font family, size, cursor style, scrollback, session restore, and the session sidebar; values are stored in an Ursa-owned config file you can also edit by hand
 - **Settings → Session sidebar → Off** hides the sessions list and session shortcuts; only horizontal tabs remain. **Keep sessions** still restores that one session’s tabs and panes
 - **Settings → Sessions → Keep sessions** restores sessions, tabs, split panes, working directories, and on-screen text on reopen, and keeps a tab open if its shell exits. **Close sessions** starts fresh and does not save previous sessions
 - New window with **⌘N** or **File → New Window**; closing the last session leaves the app running so a Dock click (or ⌘N) can open another
@@ -37,11 +37,11 @@ The repo’s `.cargo/config.toml` sets `DEVELOPER_DIR` to `/Applications/Xcode.a
 cargo run
 ```
 
-The window title is **Skiff**. On macOS, `$SHELL` is used when present (otherwise `/bin/zsh`). On Windows, a Unix-style `$SHELL` such as `/bin/zsh` is ignored. If [Git for Windows](https://gitforwindows.org/) is installed, sessions start Git Bash (`Git\bin\bash.exe`); otherwise Windows PowerShell, or `%COMSPEC%` if PowerShell is missing. A Windows `$SHELL` pointing at an `.exe` still wins when set.
+The window title is **Ursa**. On macOS, `$SHELL` is used when present (otherwise `/bin/zsh`). On Windows, a Unix-style `$SHELL` such as `/bin/zsh` is ignored. If [Git for Windows](https://gitforwindows.org/) is installed, sessions start Git Bash (`Git\bin\bash.exe`); otherwise Windows PowerShell, or `%COMSPEC%` if PowerShell is missing. A Windows `$SHELL` pointing at an `.exe` still wins when set.
 
 ## Package (macOS)
 
-This builds a release binary, wraps it as **Skiff.app**, and writes a `.dmg` you can open and drag into **Applications**:
+This builds a release binary, wraps it as **Ursa.app**, and writes a `.dmg` you can open and drag into **Applications**:
 
 ```bash
 cargo packager --release
@@ -83,13 +83,13 @@ On Windows, use **Ctrl+Shift** in place of **⌘** (for example **Ctrl+Shift+T**
 
 ## Configuration
 
-Skiff reads a TOML file it owns (not libghostty). The file is created the first time you save from **Settings** or click **Open File**.
+Ursa reads a TOML file it owns (not libghostty). The file is created the first time you save from **Settings** or click **Open File**.
 
 | Platform | Path |
 | --- | --- |
-| All | `~/.config/skiff/config.toml` |
+| All | `~/.config/ursa/config.toml` |
 
-If `XDG_CONFIG_HOME` is set, that directory is used instead of `~/.config`. An existing folder at the previous locations (`~/.config/ghostterm`, `~/Library/Application Support/Ghostterm` on macOS, `%APPDATA%\Ghostterm` on Windows) is still used until you move it.
+If `XDG_CONFIG_HOME` is set, that directory is used instead of `~/.config`. An existing folder at a previous location (`~/.config/skiff`, `~/.config/ghostterm`, `~/Library/Application Support/Ghostterm` on macOS, `%APPDATA%\Ghostterm` on Windows) is still used until you move it.
 
 Window position, size, which monitor it was on, the sidebar split width, and the session/tab/pane layout are stored separately in `window.toml` in the same folder, so moving or resizing the app does not rewrite `config.toml`. Extra windows opened with ⌘N are offset from that saved frame and start with one session. If that monitor is unplugged, the window is centered on the current screen. Drag the border between the sessions list and the terminal to resize; double-click it or use **Reset to Defaults** in Settings to restore the 220px width. With **Keep sessions**, reopening restores the last sessions, tabs, and split trees, each pane’s **local** working directory, and the text that was on screen. A new shell starts in that directory (running commands are not resumed). Remote OSC 7 paths are not restored as a local `cd` and SSH sessions are not restarted. Screen snapshots live in `state/` next to `window.toml` (`s{session}-t{tab}-p{pane}.snp`). **Close sessions** (the default) and quitting with only an unused tab both start clean on the next launch.
 
@@ -113,11 +113,11 @@ Leave `family` empty or omit it to prefer **NotoMono Nerd Font** (then **NotoMon
 
 `theme` is the filename stem of a Ghostty `.conf` in the themes folder (`nord`, `one-dark`, `tokyo-night`, `catppuccin-mocha`, `catppuccin-frappe`, `gruvbox-dark`, `solarized-light`). `themes` is that folder: relative to `config.toml`, or absolute.
 
-The default `themes/` directory is written next to `config.toml` on first launch. Each file is a Ghostty theme (the format from [ghostty.org](https://ghostty.org/docs/features/theme)): `background`, `foreground`, `cursor-color`, and `palette = 0`–`15`. Skiff derives sidebar and tab colors from those values.
+The default `themes/` directory is written next to `config.toml` on first launch. Each file is a Ghostty theme (the format from [ghostty.org](https://ghostty.org/docs/features/theme)): `background`, `foreground`, `cursor-color`, and `palette = 0`–`15`. Ursa derives sidebar and tab colors from those values.
 
-Optional Skiff keys (Ghostty ignores them): `text` (active tab titles) and `text-dim` (SESSIONS, inactive tabs, Settings). If `text-dim` is omitted, it is mixed from `foreground` and `background`. Other unknown keys are ignored, so files from [catppuccin/ghostty](https://github.com/catppuccin/ghostty) or iterm2-color-schemes can be copied in as-is.
+Optional Ursa keys (Ghostty ignores them): `text` (active tab titles) and `text-dim` (SESSIONS, inactive tabs, Settings). If `text-dim` is omitted, it is mixed from `foreground` and `background`. Other unknown keys are ignored, so files from [catppuccin/ghostty](https://github.com/catppuccin/ghostty) or iterm2-color-schemes can be copied in as-is.
 
-The Settings window writes `config.toml` when you change a value. Editing the config or a file in `themes/` reloads within a couple of seconds (or immediately via **Reload**). Invalid TOML keeps the last good settings and shows a toast; a missing file uses the platform defaults. Unknown keys are ignored so older Skiff versions stay compatible.
+The Settings window writes `config.toml` when you change a value. Editing the config or a file in `themes/` reloads within a couple of seconds (or immediately via **Reload**). Invalid TOML keeps the last good settings and shows a toast; a missing file uses the platform defaults. Unknown keys are ignored so older Ursa versions stay compatible.
 
 ## Roadmap
 
@@ -157,7 +157,7 @@ The Settings window writes `config.toml` when you change a value. Editing the co
 
 ### Config
 
-- [x] Settings UI and config file owned by Skiff (not libghostty): a basic menu or window plus a user-editable file for common options as we add them
+- [x] Settings UI and config file owned by Ursa (not libghostty): a basic menu or window plus a user-editable file for common options as we add them
 - [x] Font family, size, cursor style, scrollback length, and app theme
 - [ ] Input and click behavior (including ⌘-click file vs folder)
 
@@ -184,7 +184,7 @@ A pane is always a local PTY and login shell. SSH is a process inside that shell
 - [ ] Persist the local PTY cwd *and* the remote OSC 7 path so a restored pane starts where you launched `ssh`, with the host remembered for titles
 - [ ] Treat this machine’s LAN IPs and extra hostnames as local OSC 7 hosts
 - [ ] Avoid treating a remote host as local when it shares this machine’s hostname
-- [ ] Resolve relative ⌘-click paths against the pane’s local cwd (not Skiff’s process cwd)
+- [ ] Resolve relative ⌘-click paths against the pane’s local cwd (not Ursa’s process cwd)
 - [ ] SSH multiplexing (`ControlMaster`) so a new pane can attach to an existing connection without pretending the pane *is* SSH
 - [ ] Open remote files (SFTP, `code --remote`, and similar) — not planned with the current local-only Finder behavior
 
@@ -229,7 +229,7 @@ Config parse/round-trip tests live in `src/config.rs` (`cargo test`). A broader 
 
 ### Settings
 
-- Config file parse/round-trip for the Skiff-owned settings (not libghostty)
+- Config file parse/round-trip for the Ursa-owned settings (not libghostty)
 - Invalid or missing files fall back to defaults
 - Window position, size, and sidebar split restore
 

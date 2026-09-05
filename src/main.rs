@@ -22,7 +22,7 @@ use panes::{PaneSpec, SplitAxis};
 use session::{Session, SessionEvent, TabRestore};
 
 actions!(
-    skiff,
+    ursa,
     [
         Quit,
         NewWindow,
@@ -42,18 +42,18 @@ actions!(
 );
 
 #[derive(Clone, PartialEq, Action)]
-#[action(namespace = skiff, no_json)]
+#[action(namespace = ursa, no_json)]
 struct ActivateTab {
     index: usize,
 }
 
 #[derive(Clone, PartialEq, Action)]
-#[action(namespace = skiff, no_json)]
+#[action(namespace = ursa, no_json)]
 struct ActivateSession {
     index: usize,
 }
 
-pub(crate) const APP_ID: &str = "com.crwgrant.skiff";
+pub(crate) const APP_ID: &str = "com.crwgrant.ursa";
 const WINDOW_WIDTH: f32 = 1100.0;
 const WINDOW_HEIGHT: f32 = 720.0;
 const NEW_WINDOW_OFFSET: f32 = 28.0;
@@ -1886,11 +1886,11 @@ fn file_menu(sessions_enabled: bool) -> Menu {
 fn app_menus(sessions_enabled: bool) -> Vec<Menu> {
     vec![
         Menu {
-            name: "Skiff".into(),
+            name: "Ursa".into(),
             items: vec![
                 MenuItem::action("Settings…", OpenSettings),
                 MenuItem::separator(),
-                MenuItem::action("Quit Skiff", Quit),
+                MenuItem::action("Quit Ursa", Quit),
             ],
         },
         file_menu(sessions_enabled),
@@ -2027,7 +2027,7 @@ fn workspace_window_options(cx: &App) -> WindowOptions {
     WindowOptions {
         window_bounds: Some(window_bounds),
         titlebar: Some(TitlebarOptions {
-            title: Some("Skiff".into()),
+            title: Some("Ursa".into()),
             appears_transparent: false,
             traffic_light_position: None,
         }),
@@ -2042,7 +2042,7 @@ fn workspace_window_options(cx: &App) -> WindowOptions {
         is_resizable: true,
         is_minimizable: true,
         window_decorations: None,
-        tabbing_identifier: Some("Skiff".into()),
+        tabbing_identifier: Some("Ursa".into()),
     }
 }
 
