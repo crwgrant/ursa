@@ -2,8 +2,10 @@
 set -euo pipefail
 
 cd "${0:A:h}"
-iconset="$(mktemp -d /tmp/Ghostterm-iconset.XXXXXX)"
-trap 'rm -rf "$iconset"' EXIT
+tmp="$(mktemp -d /tmp/Skiff.XXXXXX)"
+iconset="$tmp/AppIcon.iconset"
+mkdir -p "$iconset"
+trap 'rm -rf "$tmp"' EXIT
 
 sips -z 16 16     AppIcon-small.png --out "$iconset/icon_16x16.png" >/dev/null
 sips -z 32 32     AppIcon-small.png --out "$iconset/icon_16x16@2x.png" >/dev/null

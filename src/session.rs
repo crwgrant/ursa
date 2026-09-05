@@ -955,7 +955,7 @@ fn run_emulator(
             tertiary: Default::default(),
         })
     })?;
-    terminal.on_xtversion(|_term| Some("ghostterm"))?;
+    terminal.on_xtversion(|_term| Some("skiff"))?;
 
     let mut key_encoder = key::Encoder::new()?;
     let mut key_event = key::Event::new()?;
