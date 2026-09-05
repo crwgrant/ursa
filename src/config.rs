@@ -56,7 +56,8 @@ pub struct Config {
     pub font_size: f32,
     pub scrollback_lines: u32,
     pub cursor_shape: CursorShape,
-    pub theme: theme::AppTheme,
+    pub theme: String,
+    pub themes_file: String,
 }
 
 impl Default for Config {
@@ -66,7 +67,8 @@ impl Default for Config {
             font_size: theme::FONT_SIZE,
             scrollback_lines: DEFAULT_SCROLLBACK,
             cursor_shape: CursorShape::Bar,
-            theme: theme::AppTheme::TokyoNight,
+            theme: theme::DEFAULT_THEME.to_string(),
+            themes_file: theme::DEFAULT_THEMES_FILE.to_string(),
         }
     }
 }
@@ -94,6 +96,13 @@ impl Config {
         }
         self.font_size = self.font_size.clamp(FONT_SIZE_MIN, FONT_SIZE_MAX);
         self.scrollback_lines = self.scrollback_lines.clamp(SCROLLBACK_MIN, SCROLLBACK_MAX);
+        self.theme = theme::normalize_id(&self.theme);
+        let themes_file = self.themes_file.trim();
+        self.themes_file = if themes_file.is_empty() {
+            theme::DEFAULT_THEMES_FILE.to_string()
+        } else {
+            themes_file.to_string()
+        };
     }
 
     pub fn render(&self) -> String {
@@ -112,8 +121,10 @@ family = {family}
 size = {size}
 
 [appearance]
-# App and terminal colors: tokyo-night, catppuccin-mocha, gruvbox-dark, one-dark, nord, solarized-light.
+# Name of a table in the themes file. Built-in defaults include nord, one-dark, and tokyo-night.
 theme = {theme}
+# Color catalog, relative to this file or an absolute path.
+themes = {themes}
 
 [terminal]
 # Lines of scrollback kept above the viewport ({SCROLLBACK_MIN}–{SCROLLBACK_MAX}).
@@ -121,7 +132,8 @@ scrollback_lines = {scrollback}
 # Cursor shape: block or bar.
 cursor = {cursor}
 ",
-            theme = toml_string(self.theme.as_str()),
+            theme = toml_string(&self.theme),
+            themes = toml_string(&self.themes_file),
             scrollback = self.scrollback_lines,
             cursor = toml_string(self.cursor_shape.as_str()),
         )
@@ -162,6 +174,7 @@ struct TerminalSection {
 #[derive(Debug, Default, Deserialize)]
 struct AppearanceSection {
     theme: Option<String>,
+    themes: Option<String>,
 }
 
 pub struct AppSettings {
@@ -196,6 +209,8 @@ pub fn init(cx: &mut App) {
     if let Some(error) = error {
         notify::show(cx, format!("Config file error: {error}"));
     }
+    let _ = theme::write_default(&theme::resolved_path(&path(cx), &current(cx).themes_file));
+    theme::reload(cx);
     start_watcher(cx);
 }
 
@@ -264,21 +279,22 @@ pub fn reload(cx: &mut App) -> Result<(), String> {
 
 pub fn ensure_file(cx: &mut App) -> Option<PathBuf> {
     let path = path(cx);
-    if path.exists() {
-        return Some(path);
-    }
-    match current(cx).save(&path) {
-        Ok(mtime) => {
-            if cx.has_global::<AppSettings>() {
-                *cx.global_mut::<AppSettings>().mtime.lock().unwrap() = mtime;
+    if !path.exists() {
+        match current(cx).save(&path) {
+            Ok(mtime) => {
+                if cx.has_global::<AppSettings>() {
+                    *cx.global_mut::<AppSettings>().mtime.lock().unwrap() = mtime;
+                }
             }
-            Some(path)
-        }
-        Err(error) => {
-            notify::show(cx, format!("Couldn't create config file: {error}"));
-            None
+            Err(error) => {
+                notify::show(cx, format!("Couldn't create config file: {error}"));
+                return None;
+            }
         }
     }
+    let _ = theme::write_default(&theme::resolved_path(&path, &current(cx).themes_file));
+    theme::reload(cx);
+    Some(path)
 }
 
 pub fn parse(text: &str) -> Result<Config, String> {
@@ -301,8 +317,16 @@ pub fn parse(text: &str) -> Result<Config, String> {
             .theme
             .as_deref()
             .or(file.theme.as_deref())
-            .and_then(theme::AppTheme::parse)
-            .unwrap_or_default(),
+            .map(theme::normalize_id)
+            .unwrap_or_else(|| theme::DEFAULT_THEME.to_string()),
+        themes_file: file
+            .appearance
+            .themes
+            .as_deref()
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .unwrap_or(theme::DEFAULT_THEMES_FILE)
+            .to_string(),
     };
     config.sanitize();
     Ok(config)
@@ -443,7 +467,10 @@ fn persist(cx: &mut App, config: Config, write: bool) {
     let mut error = None;
     if write {
         match config.save(&path) {
-            Ok(saved) => mtime = saved,
+            Ok(saved) => {
+                mtime = saved;
+                let _ = theme::write_default(&theme::resolved_path(&path, &config.themes_file));
+            }
             Err(err) => {
                 error = Some(err.to_string());
                 notify::show(cx, format!("Couldn't save settings: {err}"));
@@ -465,6 +492,7 @@ fn persist(cx: &mut App, config: Config, write: bool) {
             mtime: Mutex::new(mtime),
         });
     }
+    theme::reload(cx);
 }
 
 fn apply_loaded(cx: &mut App, loaded: Loaded) {
@@ -482,6 +510,7 @@ fn apply_loaded(cx: &mut App, loaded: Loaded) {
             mtime: Mutex::new(loaded.mtime),
         });
     }
+    theme::reload(cx);
 }
 
 fn start_watcher(cx: &mut App) {
@@ -512,6 +541,7 @@ fn reload_if_changed(cx: &mut App) -> Option<String> {
     }
     let mtime = mtime_of(&path);
     if mtime == previous {
+        theme::reload_if_stale(cx);
         return None;
     }
     match load_from(&path) {
@@ -520,6 +550,7 @@ fn reload_if_changed(cx: &mut App) -> Option<String> {
                 if let Some(settings) = cx.try_global::<AppSettings>() {
                     *settings.mtime.lock().unwrap() = loaded.mtime;
                 }
+                theme::reload_if_stale(cx);
                 return None;
             }
             apply_loaded(cx, loaded);
@@ -599,7 +630,8 @@ mod tests {
         assert_eq!(config.font_size, 16.0);
         assert_eq!(config.scrollback_lines, 8000);
         assert_eq!(config.cursor_shape, CursorShape::Bar);
-        assert_eq!(config.theme, theme::AppTheme::Nord);
+        assert_eq!(config.theme, "nord");
+        assert_eq!(config.themes_file, theme::DEFAULT_THEMES_FILE);
     }
 
     #[test]
@@ -635,14 +667,16 @@ mod tests {
             font_size: 15.0,
             scrollback_lines: 4000,
             cursor_shape: CursorShape::Bar,
-            theme: theme::AppTheme::CatppuccinMocha,
+            theme: "catppuccin-mocha".into(),
+            themes_file: "palettes.toml".into(),
         };
         let again = parse(&original.render()).unwrap();
         assert_eq!(again.resolved_font_family(), "SF Mono");
         assert_eq!(again.font_size, 15.0);
         assert_eq!(again.scrollback_lines, 4000);
         assert_eq!(again.cursor_shape, CursorShape::Bar);
-        assert_eq!(again.theme, theme::AppTheme::CatppuccinMocha);
+        assert_eq!(again.theme, "catppuccin-mocha");
+        assert_eq!(again.themes_file, "palettes.toml");
     }
 
     #[test]
@@ -695,15 +729,10 @@ mod tests {
 
     #[test]
     fn parse_theme_from_appearance_or_top_level() {
-        assert_eq!(
-            parse("[appearance]\ntheme = \"gruvbox-dark\"\n").unwrap().theme,
-            theme::AppTheme::GruvboxDark
-        );
-        assert_eq!(parse("theme = \"solarized-light\"\n").unwrap().theme, theme::AppTheme::SolarizedLight);
-        assert_eq!(
-            parse("theme = \"nord\"\n[appearance]\ntheme = \"one-dark\"\n").unwrap().theme,
-            theme::AppTheme::OneDark
-        );
-        assert_eq!(parse("[appearance]\ntheme = \"nope\"\n").unwrap().theme, theme::AppTheme::TokyoNight);
+        assert_eq!(parse("[appearance]\ntheme = \"gruvbox-dark\"\n").unwrap().theme, "gruvbox-dark");
+        assert_eq!(parse("theme = \"solarized-light\"\n").unwrap().theme, "solarized-light");
+        assert_eq!(parse("theme = \"nord\"\n[appearance]\ntheme = \"one-dark\"\n").unwrap().theme, "one-dark");
+        assert_eq!(parse("[appearance]\ntheme = \"nope\"\n").unwrap().theme, "nope");
+        assert_eq!(parse("[appearance]\nthemes = \"custom.toml\"\n").unwrap().themes_file, "custom.toml");
     }
 }

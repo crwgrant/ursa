@@ -40,6 +40,7 @@ impl SettingsPage {
             cx.notify();
         })
         .detach();
+        cx.observe_global::<theme::ThemeCatalog>(|_, cx| cx.notify()).detach();
         Self {
             focus,
             open_menu: None,
@@ -87,7 +88,7 @@ impl SettingsPage {
         cx.notify();
     }
 
-    fn select_theme(&mut self, theme: theme::AppTheme, cx: &mut Context<Self>) {
+    fn select_theme(&mut self, theme: String, cx: &mut Context<Self>) {
         config::update(cx, |config| {
             config.theme = theme;
         });
@@ -159,6 +160,7 @@ impl Render for SettingsPage {
         let app_theme = config.theme;
         let path = config::display_path(cx);
         let error = config::load_error(cx);
+        let theme_error = theme::catalog(cx).error;
         let colors = theme::colors(cx);
         let open_menu = self.open_menu;
         let menu: Option<AnyElement> = open_menu.map(|(kind, position)| match kind {
@@ -208,17 +210,14 @@ impl Render for SettingsPage {
                 dropdown_overlay("cursor-menu", position, items, cx).into_any_element()
             }
             MenuKind::Theme => {
-                let items: Vec<_> = theme::AppTheme::all()
+                let items: Vec<_> = theme::choices(cx)
                     .into_iter()
                     .enumerate()
-                    .map(|(index, choice)| {
-                        dropdown_item(
-                            ("theme-choice", index).into(),
-                            choice.label().to_string(),
-                            choice == app_theme,
-                            cx,
-                            move |this, cx| this.select_theme(choice, cx),
-                        )
+                    .map(|(index, (id, label))| {
+                        let selected = id == app_theme;
+                        dropdown_item(("theme-choice", index).into(), label, selected, cx, move |this, cx| {
+                            this.select_theme(id.clone(), cx);
+                        })
                     })
                     .collect();
                 dropdown_overlay("theme-menu", position, items, cx).into_any_element()
@@ -258,6 +257,12 @@ impl Render for SettingsPage {
                             .text_xs()
                             .text_color(rgb(colors.accent))
                             .child(format!("Could not reload file: {message}"))
+                    }))
+                    .children(theme_error.map(|message| {
+                        div()
+                            .text_xs()
+                            .text_color(rgb(colors.accent))
+                            .child(format!("Could not load themes file: {message}"))
                     }))
                     .child(
                         div()
@@ -309,8 +314,8 @@ fn cursor_row(shape: config::CursorShape, cx: &mut Context<SettingsPage>) -> imp
     dropdown_row("cursor-shape", "Cursor", shape.label().to_string(), MenuKind::Cursor, cx)
 }
 
-fn theme_row(app_theme: theme::AppTheme, cx: &mut Context<SettingsPage>) -> impl IntoElement {
-    dropdown_row("app-theme", "Theme", app_theme.label().to_string(), MenuKind::Theme, cx)
+fn theme_row(app_theme: String, cx: &mut Context<SettingsPage>) -> impl IntoElement {
+    dropdown_row("app-theme", "Theme", theme::label_for(&app_theme, cx), MenuKind::Theme, cx)
 }
 
 fn dropdown_row(
