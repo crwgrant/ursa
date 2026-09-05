@@ -1,6 +1,6 @@
 use std::{
     io::{Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     thread,
 };
@@ -13,6 +13,7 @@ use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 pub struct PtyIo {
     pub writer: Arc<Mutex<Box<dyn Write + Send>>>,
     pub master: Arc<Mutex<Box<dyn MasterPty + Send>>>,
+    pub pid: Option<u32>,
 }
 
 pub fn spawn_shell(
@@ -21,6 +22,7 @@ pub fn spawn_shell(
     cell_width: u32,
     cell_height: u32,
     output: flume::Sender<Vec<u8>>,
+    cwd: Option<&Path>,
 ) -> Result<PtyIo, Box<dyn std::error::Error + Send + Sync>> {
     let system = native_pty_system();
     let pair = system.openpty(PtySize {
@@ -37,11 +39,12 @@ pub fn spawn_shell(
     }
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
-    if let Some(home) = home_dir() {
-        cmd.cwd(home);
+    if let Some(cwd) = crate::cwd::usable_cwd(cwd).or_else(home_dir) {
+        cmd.cwd(cwd);
     }
 
     let mut child = pair.slave.spawn_command(cmd)?;
+    let pid = child.process_id();
     let mut reader = pair.master.try_clone_reader()?;
     let writer = pair.master.take_writer()?;
     let master = pair.master;
@@ -65,6 +68,7 @@ pub fn spawn_shell(
     Ok(PtyIo {
         writer: Arc::new(Mutex::new(writer)),
         master: Arc::new(Mutex::new(master)),
+        pid,
     })
 }
 

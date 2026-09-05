@@ -20,6 +20,7 @@ enum MenuKind {
     FontFamily,
     FontSize,
     Cursor,
+    OnExit,
     Theme,
 }
 
@@ -83,6 +84,14 @@ impl SettingsPage {
     fn select_cursor(&mut self, shape: config::CursorShape, cx: &mut Context<Self>) {
         config::update(cx, |config| {
             config.cursor_shape = shape;
+        });
+        self.open_menu = None;
+        cx.notify();
+    }
+
+    fn select_on_exit(&mut self, on_exit: config::OnExit, cx: &mut Context<Self>) {
+        config::update(cx, |config| {
+            config.on_exit = on_exit;
         });
         self.open_menu = None;
         cx.notify();
@@ -171,6 +180,7 @@ impl Render for SettingsPage {
         let family = config.resolved_font_family();
         let font_size = config.font_size;
         let cursor_shape = config.cursor_shape;
+        let on_exit = config.on_exit;
         let app_theme = config.theme;
         let path = config::display_path(cx);
         let error = config::load_error(cx);
@@ -223,6 +233,22 @@ impl Render for SettingsPage {
                     .collect();
                 dropdown_overlay("cursor-menu", position, items, cx).into_any_element()
             }
+            MenuKind::OnExit => {
+                let items: Vec<_> = config::OnExit::all()
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, option)| {
+                        dropdown_item(
+                            ("on-exit-choice", index).into(),
+                            option.label().to_string(),
+                            option == on_exit,
+                            cx,
+                            move |this, cx| this.select_on_exit(option, cx),
+                        )
+                    })
+                    .collect();
+                dropdown_overlay("on-exit-menu", position, items, cx).into_any_element()
+            }
             MenuKind::Theme => {
                 let items: Vec<_> = theme::choices(cx)
                     .into_iter()
@@ -264,6 +290,7 @@ impl Render for SettingsPage {
                     .child(font_size_row(font_size, cx))
                     .child(section_label("Terminal", colors))
                     .child(cursor_row(cursor_shape, cx))
+                    .child(on_exit_row(on_exit, cx))
                     .child(scrollback_row(self.scrollback.clone(), colors))
                     .child(section_label("Config file", colors))
                     .child(div().text_xs().text_color(rgb(colors.text_dim)).child(path))
@@ -312,7 +339,9 @@ impl Render for SettingsPage {
                     .border_color(rgb(colors.sidebar_border))
                     .text_xs()
                     .text_color(rgb(colors.text_dim))
-                    .child("Theme, font, and cursor changes apply immediately. Scrollback saves when the field loses focus."),
+                    .child(
+                        "Theme, font, cursor, and exit behavior apply immediately. Scrollback saves when the field loses focus.",
+                    ),
             )
             .children(menu)
     }
@@ -328,6 +357,10 @@ fn font_size_row(size: f32, cx: &mut Context<SettingsPage>) -> impl IntoElement 
 
 fn cursor_row(shape: config::CursorShape, cx: &mut Context<SettingsPage>) -> impl IntoElement {
     dropdown_row("cursor-shape", "Cursor", shape.label().to_string(), MenuKind::Cursor, cx)
+}
+
+fn on_exit_row(on_exit: config::OnExit, cx: &mut Context<SettingsPage>) -> impl IntoElement {
+    dropdown_row("on-exit", "Sessions", on_exit.label().to_string(), MenuKind::OnExit, cx)
 }
 
 fn theme_row(app_theme: String, cx: &mut Context<SettingsPage>) -> impl IntoElement {
