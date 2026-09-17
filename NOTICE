@@ -1,0 +1,32 @@
+Ursa
+Copyright (c) 2026 Christian
+
+This product includes software developed by third parties.
+
+libghostty
+----------
+Terminal emulation is provided by libghostty from Ghostty.
+
+Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors
+License: MIT
+https://github.com/ghostty-org/ghostty
+See licenses/ghostty.txt
+
+libghostty-vt (Rust bindings)
+-----------------------------
+Rust bindings for libghostty-vt.
+
+Copyright (c) 2026 Uzair Aftab, Leah Amelia Chen
+License: MIT OR Apache-2.0
+https://github.com/uzaaft/libghostty-rs
+See licenses/libghostty-rs.txt
+
+GPUI
+----
+The user interface is built with GPUI, Zed's GPU-accelerated UI framework.
+
+Copyright 2022 - 2025 Zed Industries, Inc.
+License: Apache-2.0
+https://github.com/zed-industries/zed
+https://gpui.rs
+See licenses/gpui.txt

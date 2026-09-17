@@ -16,6 +16,8 @@ product-name = "Ursa"
 identifier = "com.crwgrant.ursa"
 before-packaging-command = "cargo build --release"
 category = "Developer Tool"
+license-file = "LICENSE"
+resources = ["NOTICE", "licenses"]
 icons = ["packaging/AppIcon.icns", "packaging/AppIcon.ico", "packaging/linux/*.png"]
 
 [package.metadata.packager.deb]

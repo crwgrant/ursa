@@ -80,7 +80,7 @@ fn host_display_id(cx: &mut App) -> Option<DisplayId> {
 }
 
 fn window_options(cx: &App, display_id: Option<DisplayId>) -> WindowOptions {
-    let bounds = Bounds::centered(display_id, size(px(380.0), px(400.0)), cx);
+    let bounds = Bounds::centered(display_id, size(px(400.0), px(460.0)), cx);
     WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         titlebar: Some(TitlebarOptions {
@@ -93,7 +93,7 @@ fn window_options(cx: &App, display_id: Option<DisplayId>) -> WindowOptions {
         kind: gpui::WindowKind::Normal,
         is_movable: true,
         display_id,
-        window_min_size: Some(size(px(360.0), px(360.0))),
+        window_min_size: Some(size(px(380.0), px(420.0))),
         window_background: gpui::WindowBackgroundAppearance::Opaque,
         app_id: Some(crate::APP_ID.into()),
         is_resizable: false,
@@ -157,6 +157,30 @@ impl Render for AboutPage {
                         cx.stop_propagation();
                     }),
             )
+            .child(
+                div()
+                    .mt_2()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap_1()
+                    .text_xs()
+                    .text_color(rgb(colors.text_dim))
+                    .child("Uses libghostty by Mitchell Hashimoto and Ghostty contributors.")
+                    .child("Uses GPUI by Zed Industries, Inc.")
+                    .child(
+                        div()
+                            .id("notice-link")
+                            .text_color(rgb(colors.accent))
+                            .cursor(CursorStyle::PointingHand)
+                            .hover(|style| style.underline())
+                            .child("Acknowledgments")
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                cx.open_url(&format!("{GITHUB_URL}/blob/main/NOTICE"));
+                                cx.stop_propagation();
+                            }),
+                    ),
+            )
     }
 }
 
@@ -184,5 +208,15 @@ mod tests {
     fn github_link_is_the_repo() {
         assert_eq!(GITHUB_URL, "https://github.com/crwgrant/ursa");
         assert_eq!(github_label(), "github.com/crwgrant/ursa");
+    }
+
+    #[test]
+    fn notice_attributes_libghostty_and_gpui() {
+        let notice = include_str!("../NOTICE");
+        assert!(notice.contains("Mitchell Hashimoto, Ghostty contributors"));
+        assert!(notice.contains("Uzair Aftab, Leah Amelia Chen"));
+        assert!(notice.contains("Zed Industries, Inc."));
+        assert!(notice.contains("licenses/ghostty.txt"));
+        assert!(notice.contains("licenses/gpui.txt"));
     }
 }
