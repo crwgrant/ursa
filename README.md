@@ -298,4 +298,6 @@ Config parse/round-trip tests live in `src/config.rs` (`cargo test`). A broader 
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Ursa is MIT. See [LICENSE](LICENSE).
+
+It uses [libghostty](https://github.com/ghostty-org/ghostty) (MIT) through the [libghostty-vt](https://github.com/uzaaft/libghostty-rs) Rust bindings (MIT OR Apache-2.0), and [GPUI](https://gpui.rs) (Apache-2.0). Copyright notices are in [NOTICE](NOTICE). Full license texts are in [licenses/](licenses/).
