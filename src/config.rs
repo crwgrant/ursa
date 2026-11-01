@@ -4,7 +4,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use gpui::{App, Bounds, DisplayId, Global, Pixels, SharedString, Timer, WindowBounds, point, px, size};
+use gpui::{App, Bounds, DisplayId, Global, Pixels, SharedString, WindowBounds, point, px, size};
 use serde::Deserialize;
 
 use crate::{notify, panes::PaneSpec, pty, theme};
@@ -540,13 +540,6 @@ impl SessionSidebar {
         matches!(self, Self::On)
     }
 
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::On => "On",
-            Self::Off => "Off",
-        }
-    }
-
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
             "on" | "true" | "yes" | "show" | "1" => Some(Self::On),
@@ -562,10 +555,6 @@ impl SessionSidebar {
             toml::Value::String(text) => Self::parse(text),
             _ => None,
         }
-    }
-
-    pub fn all() -> [Self; 2] {
-        [Self::On, Self::Off]
     }
 }
 
@@ -998,6 +987,7 @@ pub fn font_size_presets() -> &'static [f32] {
     ]
 }
 
+#[cfg(test)]
 pub fn parse_scrollback(text: &str) -> Option<u32> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -1636,8 +1626,8 @@ fn apply_loaded(cx: &mut App, loaded: Loaded) {
 fn start_watcher(cx: &mut App) {
     cx.spawn(async move |cx| {
         loop {
-            Timer::after(Duration::from_secs(2)).await;
-            let error = cx.update(reload_if_changed).ok().flatten();
+            cx.background_executor().timer(Duration::from_secs(2)).await;
+            let error = cx.update(reload_if_changed);
             if let Some(error) = error {
                 let _ = cx.update(|cx| notify::show(cx, format!("Config file error: {error}")));
             }

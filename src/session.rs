@@ -6,10 +6,13 @@ use std::{
 };
 
 use gpui::{
-    App, Bounds, ClipboardItem, Context, Corner, CursorStyle, EventEmitter, FocusHandle, InteractiveElement, IntoElement,
+    Anchor, App, Bounds, ClipboardItem, Context, CursorStyle, DismissEvent, EventEmitter, FocusHandle, InteractiveElement,
+    IntoElement,
     KeyDownEvent, Keystroke, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
-    Pixels, Render, ScrollWheelEvent, Styled, Timer, Window, anchored, canvas, div, prelude::FluentBuilder, px, rgb,
+    Pixels, Render, ScrollEvent, Styled, Window, anchored, canvas, div, prelude::FluentBuilder, px, rgb,
 };
+use gpui::component::menu::{PopupMenu, PopupMenuItem};
+
 use libghostty_vt::{
     Terminal,
     fmt::Format,
@@ -125,10 +128,11 @@ pub struct Session {
     blink_gen: u64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct LinkMenu {
     position: gpui::Point<Pixels>,
     hit: LinkHit,
+    menu: gpui::Entity<PopupMenu>,
 }
 
 impl Session {
@@ -181,7 +185,7 @@ impl Session {
         );
 
         let focus = cx.focus_handle().tab_stop(false);
-        focus.focus(window);
+        focus.focus(window, cx);
         cx.on_focus_in(&focus, window, |this, _, cx| this.restart_cursor_blink(cx))
             .detach();
         cx.on_blur(&focus, window, |this, _, cx| this.stop_cursor_blink(cx)).detach();
@@ -249,8 +253,8 @@ impl Session {
         }
     }
 
-    pub fn focus(&self, window: &mut Window) {
-        self.focus.focus(window);
+    pub fn focus(&self, window: &mut Window, cx: &mut App) {
+        self.focus.focus(window, cx);
     }
 
     fn restart_cursor_blink(&mut self, cx: &mut Context<Self>) {
@@ -260,7 +264,7 @@ impl Session {
         cx.notify();
         cx.spawn(async move |this, cx| {
             loop {
-                Timer::after(CURSOR_BLINK).await;
+                cx.background_executor().timer(CURSOR_BLINK).await;
                 let keep = this
                     .update(cx, |this, cx| {
                         if this.blink_gen != gen || this.exited {
@@ -428,7 +432,7 @@ impl Session {
     }
 
     fn handle_mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        self.focus.focus(window);
+        self.focus.focus(window, cx);
         if event.button != MouseButton::Left {
             return;
         }
@@ -498,14 +502,49 @@ impl Session {
     }
 
     fn handle_right_click(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        self.focus.focus(window);
+        self.focus.focus(window, cx);
         if let Some(hit) = self
             .pointer_at(event.position)
             .and_then(|pointer| self.frame.link_at(pointer.row, pointer.col))
         {
+            let session = cx.weak_entity();
+            let can_open = self.can_open(&hit.action);
+            let open_label = match hit.action {
+                LinkAction::OpenUrl(_) => "Open Link",
+                LinkAction::OpenFolder(_) => "Open Folder",
+            };
+            let menu = PopupMenu::build(window, cx, move |menu, _, _| {
+                let mut menu = menu
+                    .item(PopupMenuItem::new("Copy").on_click({
+                        let session = session.clone();
+                        move |_, _, cx| {
+                            let _ = session.update(cx, |this, cx| this.copy_link(cx));
+                        }
+                    }))
+                    .item(PopupMenuItem::new("Paste").on_click({
+                        let session = session.clone();
+                        move |_, _, cx| {
+                            let _ = session.update(cx, |this, cx| this.paste_from_menu(cx));
+                        }
+                    }));
+                if can_open {
+                    menu = menu.item(PopupMenuItem::new(open_label).on_click({
+                        let session = session.clone();
+                        move |_, _, cx| {
+                            let _ = session.update(cx, |this, cx| this.open_from_menu(cx));
+                        }
+                    }));
+                }
+                menu
+            });
+            cx.subscribe(&menu, |this, _, _: &DismissEvent, cx| {
+                this.dismiss_link_menu(cx);
+            })
+            .detach();
             self.link_menu = Some(LinkMenu {
                 position: event.position,
                 hit: hit.clone(),
+                menu,
             });
             self.hovered_link = Some(hit);
             cx.stop_propagation();
@@ -589,7 +628,7 @@ impl Session {
         })
     }
 
-    fn handle_scroll(&mut self, event: &ScrollWheelEvent, cx: &mut Context<Self>) {
+    fn handle_scroll(&mut self, event: &ScrollEvent, cx: &mut Context<Self>) {
         let line = crate::config::font_size(cx) * theme::LINE_HEIGHT;
         let delta = match event.delta.pixel_delta(px(line)) {
             gpui::Point { y, .. } => {
@@ -657,7 +696,7 @@ impl Render for Session {
             })
             .on_action(cx.listener(|this, _: &crate::ClearScreen, _window, _cx| this.clear_screen()))
             .on_modifiers_changed(cx.listener(|this, event, window, cx| this.handle_modifiers(event, window, cx)))
-            .on_scroll_wheel(cx.listener(|this, event, _window, cx| this.handle_scroll(event, cx)))
+            .on_scroll(cx.listener(|this, event, _window, cx| this.handle_scroll(event, cx)))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, event, window, cx| this.handle_mouse_down(event, window, cx)),
@@ -693,21 +732,11 @@ impl Render for Session {
                 .size_full(),
             )
             .when(self.exited, |el| el.child(exited_banner(colors)))
-            .children(link_menu.map(|menu| {
-                let can_open = self.can_open(&menu.hit.action);
-                link_context_menu(menu, can_open, cx)
-            }))
+            .children(link_menu.map(|menu| link_context_menu(menu, cx)))
     }
 }
 
-fn link_context_menu(menu: LinkMenu, can_open: bool, cx: &mut Context<Session>) -> impl IntoElement {
-    let open_label = match menu.hit.action {
-        LinkAction::OpenUrl(_) => "Open Link",
-        LinkAction::OpenFolder(_) => "Open Folder",
-    };
-
-    let colors = theme::colors(cx);
-
+fn link_context_menu(menu: LinkMenu, cx: &mut Context<Session>) -> impl IntoElement {
     div()
         .absolute()
         .top_0()
@@ -725,52 +754,7 @@ fn link_context_menu(menu: LinkMenu, can_open: bool, cx: &mut Context<Session>) 
             MouseButton::Right,
             cx.listener(|this, event, window, cx| this.handle_right_click(event, window, cx)),
         )
-        .child(
-            anchored().position(menu.position).anchor(Corner::TopLeft).child(
-                div()
-                    .occlude()
-                    .min_w(px(148.0))
-                    .py_1()
-                    .rounded_md()
-                    .bg(rgb(colors.tooltip))
-                    .border_1()
-                    .border_color(rgb(colors.sidebar_border))
-                    .shadow_md()
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
-                    .child(link_menu_item("link-menu-copy", "Copy", cx, |this, cx| this.copy_link(cx)))
-                    .child(link_menu_item("link-menu-paste", "Paste", cx, |this, cx| this.paste_from_menu(cx)))
-                    .when(can_open, |el| {
-                        el.child(link_menu_item("link-menu-open", open_label, cx, |this, cx| this.open_from_menu(cx)))
-                    }),
-            ),
-        )
-}
-
-fn link_menu_item(
-    id: &'static str,
-    label: &'static str,
-    cx: &mut Context<Session>,
-    on_click: impl Fn(&mut Session, &mut Context<Session>) + 'static,
-) -> impl IntoElement {
-    let colors = theme::colors(cx);
-    div()
-        .id(id)
-        .w_full()
-        .px_3()
-        .py_1()
-        .text_sm()
-        .text_color(rgb(colors.text))
-        .cursor_pointer()
-        .hover(move |style| style.bg(rgb(colors.tab_hover)))
-        .child(label)
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, _event, _window, cx| {
-                cx.stop_propagation();
-                on_click(this, cx);
-            }),
-        )
+        .child(anchored().position(menu.position).anchor(Anchor::TopLeft).child(menu.menu))
 }
 
 pub fn clipboard_has_text(cx: &App) -> bool {
@@ -895,7 +879,7 @@ fn restore_terminal(
 
 fn terminal_cwd(terminal: &Terminal, pid: Option<u32>) -> Option<crate::cwd::TerminalCwd> {
     if let Ok(raw) = terminal.pwd() {
-        if let Some(cwd) = crate::cwd::parse_pwd(raw) {
+        if let Some(cwd) = std::str::from_utf8(raw).ok().and_then(crate::cwd::parse_pwd) {
             return Some(cwd);
         }
     }
@@ -1109,8 +1093,9 @@ fn run_emulator(
         }
 
         if let Ok(title) = terminal.title() {
-            if title != last_title {
-                last_title = title.to_string();
+            let title = String::from_utf8_lossy(title);
+            if title.as_ref() != last_title {
+                last_title = title.into_owned();
                 if events.send(Event::Title(last_title.clone())).is_err() {
                     break;
                 }
