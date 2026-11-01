@@ -11,7 +11,10 @@ use gpui::{
     KeyDownEvent, Keystroke, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
     Pixels, Render, ScrollEvent, Styled, Window, anchored, canvas, div, prelude::FluentBuilder, px, rgb,
 };
-use gpui::component::menu::{PopupMenu, PopupMenuItem};
+use gpui::component::{
+    ActiveTheme as _,
+    menu::{PopupMenu, PopupMenuItem},
+};
 
 use libghostty_vt::{
     Terminal,
@@ -35,6 +38,7 @@ use crate::{
 };
 
 const CURSOR_BLINK: Duration = Duration::from_millis(530);
+const SCROLLBAR_WIDTH: f32 = 14.0;
 
 #[derive(Clone, Copy, Debug)]
 struct SelectPointer {
@@ -57,6 +61,7 @@ enum Command {
         cell_height: u32,
     },
     Scroll(isize),
+    ScrollTo(u64),
     SelectPress(SelectPointer),
     SelectDrag {
         pointer: SelectPointer,
@@ -126,6 +131,13 @@ pub struct Session {
     link_menu: Option<LinkMenu>,
     cursor_on: bool,
     blink_gen: u64,
+    scrollbar_drag: Option<ScrollbarDrag>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ScrollbarDrag {
+    grab: f32,
+    offset: u64,
 }
 
 #[derive(Clone)]
@@ -250,6 +262,7 @@ impl Session {
             link_menu: None,
             cursor_on: true,
             blink_gen: 0,
+            scrollbar_drag: None,
         }
     }
 
@@ -436,6 +449,10 @@ impl Session {
         if event.button != MouseButton::Left {
             return;
         }
+        if self.begin_scrollbar_drag(event.position, cx) {
+            cx.stop_propagation();
+            return;
+        }
         self.dismiss_link_menu(cx);
         if link_modifier(&event.modifiers) {
             if let Some(hit) = self
@@ -457,6 +474,11 @@ impl Session {
     }
 
     fn handle_mouse_move(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
+        if self.scrollbar_drag.is_some() {
+            self.drag_scrollbar(event.position, cx);
+            cx.stop_propagation();
+            return;
+        }
         self.update_link_hover(event.position, link_modifier(&event.modifiers), cx);
         if !self.selecting {
             return;
@@ -600,6 +622,10 @@ impl Session {
         if event.button != MouseButton::Left {
             return;
         }
+        if self.finish_scrollbar_drag(cx) {
+            cx.stop_propagation();
+            return;
+        }
         self.selecting = false;
         if let Some(pointer) = self.pointer_at(event.position) {
             let _ = self.commands.send(Command::SelectRelease(pointer));
@@ -608,6 +634,9 @@ impl Session {
     }
 
     fn pointer_at(&self, position: gpui::Point<Pixels>) -> Option<SelectPointer> {
+        if self.scrollbar_drag.is_some() || self.scrollbar_hit(position) {
+            return None;
+        }
         let bounds = self.content_bounds?;
         let pad = f32::from(theme::TERMINAL_PAD);
         let cell_w = f32::from(self.cell_size.x).max(1.0);
@@ -640,6 +669,81 @@ impl Session {
             let _ = self.commands.send(Command::Scroll(delta));
             cx.stop_propagation();
         }
+    }
+
+    fn scrollbar_state(&self) -> frame::Scrollbar {
+        let mut scroll = self.frame.scrollbar;
+        if let Some(drag) = self.scrollbar_drag {
+            scroll.offset = drag.offset;
+        }
+        scroll
+    }
+
+    fn scrollbar_hit(&self, position: gpui::Point<Pixels>) -> bool {
+        let Some(bounds) = self.content_bounds else {
+            return false;
+        };
+        if !self.scrollbar_state().overflow() {
+            return false;
+        }
+        let x = f32::from(position.x);
+        let y = f32::from(position.y);
+        let right = f32::from(bounds.right());
+        let top = f32::from(bounds.top());
+        let bottom = f32::from(bounds.bottom());
+        x >= right - SCROLLBAR_WIDTH && x <= right && y >= top && y <= bottom
+    }
+
+    fn begin_scrollbar_drag(&mut self, position: gpui::Point<Pixels>, cx: &mut Context<Self>) -> bool {
+        if !self.scrollbar_hit(position) {
+            return false;
+        }
+        let Some(bounds) = self.content_bounds else {
+            return false;
+        };
+        let scroll = self.scrollbar_state();
+        let track = f32::from(bounds.size.height);
+        let y_in_track = f32::from(position.y - bounds.origin.y);
+        let thumb = scroll.thumb(track);
+        let grab = if y_in_track >= thumb.top && y_in_track <= thumb.top + thumb.height {
+            y_in_track - thumb.top
+        } else {
+            thumb.height / 2.0
+        };
+        self.selecting = false;
+        self.scrollbar_drag = Some(ScrollbarDrag {
+            grab,
+            offset: scroll.offset,
+        });
+        self.drag_scrollbar(position, cx);
+        true
+    }
+
+    fn drag_scrollbar(&mut self, position: gpui::Point<Pixels>, cx: &mut Context<Self>) {
+        let Some(drag) = self.scrollbar_drag else {
+            return;
+        };
+        let Some(bounds) = self.content_bounds else {
+            return;
+        };
+        let scroll = self.scrollbar_state();
+        let track = f32::from(bounds.size.height);
+        let thumb_top = f32::from(position.y - bounds.origin.y) - drag.grab;
+        let offset = scroll.offset_at(thumb_top, track);
+        if self.scrollbar_drag.as_ref().is_some_and(|current| current.offset == offset) {
+            return;
+        }
+        self.scrollbar_drag = Some(ScrollbarDrag { grab: drag.grab, offset });
+        let _ = self.commands.send(Command::ScrollTo(offset));
+        cx.notify();
+    }
+
+    fn finish_scrollbar_drag(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.scrollbar_drag.take().is_none() {
+            return false;
+        }
+        cx.notify();
+        true
     }
 
     fn sync_size(&mut self, bounds: Bounds<Pixels>, window: &mut Window, cx: &App) {
@@ -707,6 +811,14 @@ impl Render for Session {
             )
             .on_mouse_move(cx.listener(|this, event, _window, cx| this.handle_mouse_move(event, cx)))
             .on_mouse_up(MouseButton::Left, cx.listener(|this, event, _window, cx| this.handle_mouse_up(event, cx)))
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    if this.finish_scrollbar_drag(cx) {
+                        cx.stop_propagation();
+                    }
+                }),
+            )
             .child(
                 canvas(
                     {
@@ -731,8 +843,70 @@ impl Render for Session {
                 )
                 .size_full(),
             )
+            .children(self.scrollbar_overlay(cx))
             .when(self.exited, |el| el.child(exited_banner(colors)))
             .children(link_menu.map(|menu| link_context_menu(menu, cx)))
+    }
+}
+
+impl Session {
+    fn scrollbar_overlay(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let bounds = self.content_bounds?;
+        let scroll = self.scrollbar_state();
+        if !scroll.overflow() {
+            return None;
+        }
+        let track = f32::from(bounds.size.height);
+        if track <= 0.0 {
+            return None;
+        }
+        let thumb = scroll.thumb(track);
+        let theme = cx.theme();
+        let thumb_color = theme.scrollbar_thumb;
+        let thumb_hover = theme.scrollbar_thumb_hover;
+        Some(
+            div()
+                .id("terminal-scrollbar")
+                .absolute()
+                .top_0()
+                .right_0()
+                .bottom_0()
+                .w(px(SCROLLBAR_WIDTH))
+                .occlude()
+                .cursor(CursorStyle::Arrow)
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                        this.focus.focus(window, cx);
+                        this.begin_scrollbar_drag(event.position, cx);
+                        cx.stop_propagation();
+                    }),
+                )
+                .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _window, cx| {
+                    if this.scrollbar_drag.is_some() {
+                        this.drag_scrollbar(event.position, cx);
+                        cx.stop_propagation();
+                    }
+                }))
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|this, _event: &MouseUpEvent, _window, cx| {
+                        this.finish_scrollbar_drag(cx);
+                        cx.stop_propagation();
+                    }),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(3.0))
+                        .right(px(3.0))
+                        .top(px(thumb.top))
+                        .h(px(thumb.height))
+                        .rounded_full()
+                        .bg(thumb_color)
+                        .hover(move |style| style.bg(thumb_hover)),
+                ),
+        )
     }
 }
 
@@ -821,6 +995,7 @@ fn empty_frame(colors: theme::Colors) -> Frame {
         rows: Vec::new(),
         cursor: None,
         has_selection: false,
+        scrollbar: frame::Scrollbar::default(),
     }
 }
 
@@ -1035,6 +1210,9 @@ fn run_emulator(
             }
             Command::Scroll(delta) => {
                 terminal.scroll_viewport(ScrollViewport::Delta(delta));
+            }
+            Command::ScrollTo(row) => {
+                terminal.scroll_viewport(ScrollViewport::Row(row as usize));
             }
             Command::SelectPress(pointer) => {
                 apply_select_press(&mut terminal, &mut gesture, &mut press_event, pointer, started.elapsed())?;
