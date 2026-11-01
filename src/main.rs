@@ -15,17 +15,15 @@ mod theme;
 
 use std::collections::HashMap;
 
-use gpui::{
-    Action, AnyElement, AnyView, AnyWindowHandle, App, AppContext as _, Bounds, Context, CursorStyle, DisplayId, DragMoveEvent,
-    Entity,
-    Global, KeyBinding, KeyDownEvent, Keystroke, MenuItem, MouseButton, MouseDownEvent, Pixels, SharedString, TitlebarOptions,
-    Window,
-    WindowBounds, WindowOptions, actions, canvas, div, point, prelude::*, px, rgb, size,
-};
 use gpui::component::{
     Sizable as _,
     button::{Button, ButtonVariants as _},
     menu::{AppMenuBar, DropdownMenu, PopupMenuItem},
+};
+use gpui::{
+    Action, AnyElement, AnyView, AnyWindowHandle, App, AppContext as _, Bounds, Context, CursorStyle, DisplayId, DragMoveEvent,
+    Entity, Global, KeyBinding, KeyDownEvent, Keystroke, MenuItem, MouseButton, MouseDownEvent, Pixels, SharedString,
+    TitlebarOptions, Window, WindowBounds, WindowOptions, actions, canvas, div, point, prelude::*, px, rgb, size,
 };
 use panes::{PaneSpec, SplitAxis};
 use session::{Session, SessionEvent, TabRestore};
@@ -1954,8 +1952,12 @@ impl Render for ActionTooltip {
 fn apply_app_menus(cx: &mut App) {
     let sessions_enabled = config::sessions_enabled(cx);
     cx.set_menus(app_menu::native_menus(sessions_enabled));
-    gpui::base::GlobalState::global_mut(cx)
-        .set_app_menus(app_menu::native_menus(sessions_enabled).into_iter().map(gpui::Menu::owned).collect());
+    gpui::base::GlobalState::global_mut(cx).set_app_menus(
+        app_menu::native_menus(sessions_enabled)
+            .into_iter()
+            .map(gpui::Menu::owned)
+            .collect(),
+    );
 }
 
 fn workspace_key_bindings() -> Vec<KeyBinding> {
@@ -1995,9 +1997,11 @@ fn workspace_key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-shift-]", FocusNextPane, None),
         KeyBinding::new("ctrl-shift-[", FocusPrevPane, None),
     ];
-    for (index, keystroke) in ["cmd-1", "cmd-2", "cmd-3", "cmd-4", "cmd-5", "cmd-6", "cmd-7", "cmd-8", "cmd-9"]
-        .into_iter()
-        .enumerate()
+    for (index, keystroke) in [
+        "cmd-1", "cmd-2", "cmd-3", "cmd-4", "cmd-5", "cmd-6", "cmd-7", "cmd-8", "cmd-9",
+    ]
+    .into_iter()
+    .enumerate()
     {
         bindings.push(KeyBinding::new(keystroke, ActivateTab { index }, None));
     }
@@ -2017,9 +2021,11 @@ fn workspace_key_bindings() -> Vec<KeyBinding> {
     {
         bindings.push(KeyBinding::new(keystroke, ActivateTab { index }, None));
     }
-    for (index, keystroke) in ["ctrl-1", "ctrl-2", "ctrl-3", "ctrl-4", "ctrl-5", "ctrl-6", "ctrl-7", "ctrl-8", "ctrl-9"]
-        .into_iter()
-        .enumerate()
+    for (index, keystroke) in [
+        "ctrl-1", "ctrl-2", "ctrl-3", "ctrl-4", "ctrl-5", "ctrl-6", "ctrl-7", "ctrl-8", "ctrl-9",
+    ]
+    .into_iter()
+    .enumerate()
     {
         bindings.push(KeyBinding::new(keystroke, ActivateSession { index }, None));
     }

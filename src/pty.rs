@@ -171,7 +171,9 @@ fn packaged_appdir() -> Option<PathBuf> {
             return Some(dir);
         }
     }
-    std::env::current_exe().ok().and_then(|exe| appdir_from_exe(&exe).map(Path::to_path_buf))
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| appdir_from_exe(&exe).map(Path::to_path_buf))
 }
 
 fn appdir_from_exe(exe: &Path) -> Option<&Path> {
@@ -191,7 +193,11 @@ fn filter_appdir_from_search_path(value: &OsStr, appdir: &Path) -> Option<OsStri
     if paths.is_empty() {
         return None;
     }
-    let kept: Vec<PathBuf> = paths.iter().filter(|path| !path_is_in_appdir(path, appdir)).cloned().collect();
+    let kept: Vec<PathBuf> = paths
+        .iter()
+        .filter(|path| !path_is_in_appdir(path, appdir))
+        .cloned()
+        .collect();
     if kept.len() == paths.len() {
         return None;
     }

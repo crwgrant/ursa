@@ -5,15 +5,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-use gpui::{
-    Anchor, App, Bounds, ClipboardItem, Context, CursorStyle, DismissEvent, EventEmitter, FocusHandle, InteractiveElement,
-    IntoElement,
-    KeyDownEvent, Keystroke, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
-    Pixels, Render, ScrollEvent, Styled, Window, anchored, canvas, div, prelude::FluentBuilder, px, rgb,
-};
 use gpui::component::{
     ActiveTheme as _,
     menu::{PopupMenu, PopupMenuItem},
+};
+use gpui::{
+    Anchor, App, Bounds, ClipboardItem, Context, CursorStyle, DismissEvent, EventEmitter, FocusHandle, InteractiveElement,
+    IntoElement, KeyDownEvent, Keystroke, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement, Pixels, Render, ScrollEvent, Styled, Window, anchored, canvas, div, prelude::FluentBuilder, px, rgb,
 };
 
 use libghostty_vt::{

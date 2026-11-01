@@ -2,8 +2,7 @@ use std::path::PathBuf;
 
 use gpui::{
     Bounds, ContentMask, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Hsla, Pixels, Point, SharedString, TextAlign,
-    TextRun,
-    UnderlineStyle, Window, fill, point, px, rgb, size,
+    TextRun, UnderlineStyle, Window, fill, point, px, rgb, size,
 };
 use libghostty_vt::{
     Terminal,
@@ -1258,17 +1257,10 @@ mod tests {
         assert_eq!(top.top, 0.0);
         assert!(top.height < 100.0);
 
-        let bottom = Scrollbar {
-            offset: 160,
-            ..scroll
-        }
-        .thumb(100.0);
+        let bottom = Scrollbar { offset: 160, ..scroll }.thumb(100.0);
         assert!((bottom.top + bottom.height - 100.0).abs() < 0.01);
 
-        let mid = Scrollbar {
-            offset: 80,
-            ..scroll
-        };
+        let mid = Scrollbar { offset: 80, ..scroll };
         let thumb = mid.thumb(100.0);
         assert_eq!(mid.offset_at(thumb.top, 100.0), 80);
     }
