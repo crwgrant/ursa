@@ -23,6 +23,7 @@ use gpui::{
     WindowBounds, WindowOptions, actions, canvas, div, point, prelude::*, px, rgb, size,
 };
 use gpui::component::{
+    Sizable as _,
     button::{Button, ButtonVariants as _},
     menu::{AppMenuBar, DropdownMenu, PopupMenuItem},
 };
@@ -1464,7 +1465,7 @@ impl Workspace {
             .id("pane-tabs")
             .flex()
             .items_end()
-            .h(px(36.0))
+            .h(px(44.0))
             .flex_shrink_0()
             .bg(rgb(colors.window))
             .overflow_x_scroll()
@@ -1595,28 +1596,48 @@ fn new_tab_button(cx: &mut Context<Workspace>) -> impl IntoElement {
         .into_any_element()
 }
 
-fn pane_settings_button(_cx: &mut Context<Workspace>) -> impl IntoElement {
-    Button::new("pane-settings")
-        .ghost()
-        .compact()
-        .label("Settings")
-        .tooltip(format!("Settings ({})", app_menu::settings_shortcut()))
-        .on_click(|_, _, cx| {
-            crate::settings::open(cx);
-            cx.stop_propagation();
-        })
+fn pane_bar_control(button: impl IntoElement, cx: &App) -> impl IntoElement {
+    let colors = theme::colors(cx);
+    div()
+        .h_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .px_2()
+        .flex_shrink_0()
+        .border_b_1()
+        .border_color(rgb(colors.sidebar_border))
+        .child(button)
+}
+
+fn pane_settings_button(cx: &mut Context<Workspace>) -> impl IntoElement {
+    pane_bar_control(
+        Button::new("pane-settings")
+            .ghost()
+            .large()
+            .label("Settings")
+            .tooltip(format!("Settings ({})", app_menu::settings_shortcut()))
+            .on_click(|_, _, cx| {
+                crate::settings::open(cx);
+                cx.stop_propagation();
+            }),
+        cx,
+    )
 }
 
 fn new_pane_tab_button(cx: &mut Context<Workspace>) -> impl IntoElement {
     let workspace = cx.weak_entity();
-    Button::new("new-pane-tab")
-        .ghost()
-        .compact()
-        .label("+")
-        .tooltip(format!("New Tab ({})", app_menu::new_tab_shortcut()))
-        .on_click(move |_, window, cx| {
-            let _ = workspace.update(cx, |this, cx| this.add_tab(window, cx));
-        })
+    pane_bar_control(
+        Button::new("new-pane-tab")
+            .ghost()
+            .large()
+            .label("+")
+            .tooltip(format!("New Tab ({})", app_menu::new_tab_shortcut()))
+            .on_click(move |_, window, cx| {
+                let _ = workspace.update(cx, |this, cx| this.add_tab(window, cx));
+            }),
+        cx,
+    )
 }
 
 fn pane_tab(
@@ -1638,8 +1659,8 @@ fn pane_tab(
         .flex()
         .items_center()
         .gap_2()
-        .min_w(px(140.0))
-        .max_w(px(220.0))
+        .min_w(px(160.0))
+        .max_w(px(240.0))
         .bg(rgb(background))
         .cursor_pointer()
         .when(!selected, |tab| tab.border_b_1().border_color(rgb(colors.sidebar_border)))
@@ -1651,15 +1672,15 @@ fn pane_tab(
         )
         .child(
             div()
-                .w(px(14.0))
-                .h(px(14.0))
+                .w(px(20.0))
+                .h(px(20.0))
                 .rounded_sm()
                 .border_1()
                 .border_color(rgb(colors.sidebar_border))
                 .flex()
                 .items_center()
                 .justify_center()
-                .text_xs()
+                .text_sm()
                 .text_color(rgb(colors.text_dim))
                 .child(">_"),
         )
@@ -1667,7 +1688,7 @@ fn pane_tab(
             div()
                 .flex_1()
                 .min_w_0()
-                .text_sm()
+                .text_base()
                 .text_ellipsis()
                 .text_color(rgb(text))
                 .child(title),
@@ -1682,14 +1703,14 @@ fn close_pane_tab_button(index: usize, cx: &mut Context<Workspace>) -> impl Into
     let colors = theme::colors(cx);
     div()
         .id(("pane-tab-close", index))
-        .h(px(16.0))
-        .w(px(16.0))
+        .h(px(20.0))
+        .w(px(20.0))
         .rounded_sm()
         .flex()
         .items_center()
         .justify_center()
         .flex_shrink_0()
-        .text_xs()
+        .text_sm()
         .text_color(rgb(colors.text_dim))
         .cursor_pointer()
         .hover(move |style| style.bg(rgb(colors.button)).text_color(rgb(colors.text)))
