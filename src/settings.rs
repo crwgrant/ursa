@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use gpui::{
-    Animation, AnimationExt as _, AnyElement, App, Bounds, Context, Corner, CursorStyle, DisplayId, Entity, FocusHandle,
+    Anchor, Animation, AnimationExt as _, AnyElement, App, Bounds, Context, CursorStyle, DisplayId, Entity, FocusHandle,
     Focusable, Global, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, ParentElement, Pixels, Render,
     Styled, TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, anchored, div, prelude::*, px, rgb, size,
 };
@@ -35,7 +35,7 @@ pub struct SettingsPage {
 impl SettingsPage {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus = cx.focus_handle();
-        focus.focus(window);
+        focus.focus(window, cx);
         let scrollback = cx.new(|cx| ScrollbackField::new(config::scrollback_lines(cx), window, cx));
         cx.observe_global::<config::AppSettings>(|this, cx| {
             let lines = config::scrollback_lines(cx);
@@ -190,6 +190,7 @@ fn window_options(cx: &App, display_id: Option<DisplayId>) -> WindowOptions {
         is_minimizable: true,
         window_decorations: None,
         tabbing_identifier: Some("Ursa Settings".into()),
+        ..Default::default()
     }
 }
 
@@ -505,7 +506,7 @@ fn dropdown_overlay(
             }),
         )
         .child(
-            anchored().position(position).anchor(Corner::TopLeft).child(
+            anchored().position(position).anchor(Anchor::TopLeft).child(
                 div()
                     .id(id)
                     .occlude()
@@ -731,7 +732,7 @@ impl Render for ScrollbackField {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _event, window, cx| {
-                    this.focus.focus(window);
+                    this.focus.focus(window, cx);
                     this.selected = true;
                     cx.notify();
                     cx.stop_propagation();

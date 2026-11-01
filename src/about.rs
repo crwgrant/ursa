@@ -28,7 +28,7 @@ pub struct AboutPage {
 impl AboutPage {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus = cx.focus_handle();
-        focus.focus(window);
+        focus.focus(window, cx);
         cx.observe_global::<theme::ThemeCatalog>(|_, cx| cx.notify()).detach();
         Self { focus }
     }
@@ -100,6 +100,7 @@ fn window_options(cx: &App, display_id: Option<DisplayId>) -> WindowOptions {
         is_minimizable: true,
         window_decorations: None,
         tabbing_identifier: Some("Ursa About".into()),
+        ..Default::default()
     }
 }
 

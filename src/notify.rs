@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use gpui::{App, Global, InteractiveElement, IntoElement, MouseButton, ParentElement, SharedString, Styled, Timer, div, px, rgb};
+use gpui::{App, Global, InteractiveElement, IntoElement, MouseButton, ParentElement, SharedString, Styled, div, px, rgb};
 
 use crate::theme;
 
@@ -37,7 +37,7 @@ pub fn show(cx: &mut App, message: impl Into<SharedString>) {
     };
 
     cx.spawn(async move |cx| {
-        Timer::after(LIFETIME).await;
+        cx.background_executor().timer(LIFETIME).await;
         let _ = cx.update(|cx| dismiss(id, cx));
     })
     .detach();

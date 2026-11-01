@@ -6,9 +6,9 @@ use std::{
 };
 
 use gpui::{
-    App, Bounds, ClipboardItem, Context, Corner, CursorStyle, EventEmitter, FocusHandle, InteractiveElement, IntoElement,
+    Anchor, App, Bounds, ClipboardItem, Context, CursorStyle, EventEmitter, FocusHandle, InteractiveElement, IntoElement,
     KeyDownEvent, Keystroke, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
-    Pixels, Render, ScrollWheelEvent, Styled, Timer, Window, anchored, canvas, div, prelude::FluentBuilder, px, rgb,
+    Pixels, Render, ScrollEvent, Styled, Window, anchored, canvas, div, prelude::FluentBuilder, px, rgb,
 };
 use libghostty_vt::{
     Terminal,
@@ -181,7 +181,7 @@ impl Session {
         );
 
         let focus = cx.focus_handle().tab_stop(false);
-        focus.focus(window);
+        focus.focus(window, cx);
         cx.on_focus_in(&focus, window, |this, _, cx| this.restart_cursor_blink(cx))
             .detach();
         cx.on_blur(&focus, window, |this, _, cx| this.stop_cursor_blink(cx)).detach();
@@ -249,8 +249,8 @@ impl Session {
         }
     }
 
-    pub fn focus(&self, window: &mut Window) {
-        self.focus.focus(window);
+    pub fn focus(&self, window: &mut Window, cx: &mut App) {
+        self.focus.focus(window, cx);
     }
 
     fn restart_cursor_blink(&mut self, cx: &mut Context<Self>) {
@@ -260,7 +260,7 @@ impl Session {
         cx.notify();
         cx.spawn(async move |this, cx| {
             loop {
-                Timer::after(CURSOR_BLINK).await;
+                cx.background_executor().timer(CURSOR_BLINK).await;
                 let keep = this
                     .update(cx, |this, cx| {
                         if this.blink_gen != gen || this.exited {
@@ -428,7 +428,7 @@ impl Session {
     }
 
     fn handle_mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        self.focus.focus(window);
+        self.focus.focus(window, cx);
         if event.button != MouseButton::Left {
             return;
         }
@@ -498,7 +498,7 @@ impl Session {
     }
 
     fn handle_right_click(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        self.focus.focus(window);
+        self.focus.focus(window, cx);
         if let Some(hit) = self
             .pointer_at(event.position)
             .and_then(|pointer| self.frame.link_at(pointer.row, pointer.col))
@@ -589,7 +589,7 @@ impl Session {
         })
     }
 
-    fn handle_scroll(&mut self, event: &ScrollWheelEvent, cx: &mut Context<Self>) {
+    fn handle_scroll(&mut self, event: &ScrollEvent, cx: &mut Context<Self>) {
         let line = crate::config::font_size(cx) * theme::LINE_HEIGHT;
         let delta = match event.delta.pixel_delta(px(line)) {
             gpui::Point { y, .. } => {
@@ -657,7 +657,7 @@ impl Render for Session {
             })
             .on_action(cx.listener(|this, _: &crate::ClearScreen, _window, _cx| this.clear_screen()))
             .on_modifiers_changed(cx.listener(|this, event, window, cx| this.handle_modifiers(event, window, cx)))
-            .on_scroll_wheel(cx.listener(|this, event, _window, cx| this.handle_scroll(event, cx)))
+            .on_scroll(cx.listener(|this, event, _window, cx| this.handle_scroll(event, cx)))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, event, window, cx| this.handle_mouse_down(event, window, cx)),
@@ -726,7 +726,7 @@ fn link_context_menu(menu: LinkMenu, can_open: bool, cx: &mut Context<Session>) 
             cx.listener(|this, event, window, cx| this.handle_right_click(event, window, cx)),
         )
         .child(
-            anchored().position(menu.position).anchor(Corner::TopLeft).child(
+            anchored().position(menu.position).anchor(Anchor::TopLeft).child(
                 div()
                     .occlude()
                     .min_w(px(148.0))
@@ -895,7 +895,7 @@ fn restore_terminal(
 
 fn terminal_cwd(terminal: &Terminal, pid: Option<u32>) -> Option<crate::cwd::TerminalCwd> {
     if let Ok(raw) = terminal.pwd() {
-        if let Some(cwd) = crate::cwd::parse_pwd(raw) {
+        if let Some(cwd) = std::str::from_utf8(raw).ok().and_then(crate::cwd::parse_pwd) {
             return Some(cwd);
         }
     }
@@ -1109,8 +1109,9 @@ fn run_emulator(
         }
 
         if let Ok(title) = terminal.title() {
-            if title != last_title {
-                last_title = title.to_string();
+            let title = String::from_utf8_lossy(title);
+            if title.as_ref() != last_title {
+                last_title = title.into_owned();
                 if events.send(Event::Title(last_title.clone())).is_err() {
                     break;
                 }

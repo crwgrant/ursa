@@ -4,7 +4,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use gpui::{App, Bounds, DisplayId, Global, Pixels, SharedString, Timer, WindowBounds, point, px, size};
+use gpui::{App, Bounds, DisplayId, Global, Pixels, SharedString, WindowBounds, point, px, size};
 use serde::Deserialize;
 
 use crate::{notify, panes::PaneSpec, pty, theme};
@@ -1636,8 +1636,8 @@ fn apply_loaded(cx: &mut App, loaded: Loaded) {
 fn start_watcher(cx: &mut App) {
     cx.spawn(async move |cx| {
         loop {
-            Timer::after(Duration::from_secs(2)).await;
-            let error = cx.update(reload_if_changed).ok().flatten();
+            cx.background_executor().timer(Duration::from_secs(2)).await;
+            let error = cx.update(reload_if_changed);
             if let Some(error) = error {
                 let _ = cx.update(|cx| notify::show(cx, format!("Config file error: {error}")));
             }

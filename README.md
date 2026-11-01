@@ -28,7 +28,7 @@ A native terminal with a reliable bearing, built in Rust with [GPUI](https://git
 
 - macOS, Windows, or Linux
 - [Rust](https://rustup.rs/) (stable)
-- [Zig](https://ziglang.org/) for the libghostty-vt build
+- [Zig](https://ziglang.org/) **0.17.x** for the libghostty-vt build. Ghostty only compiles with that exact series; Homebrew’s `zig` formula is fine when it is 0.17. Older 0.16.x compilers fail on current libghostty-rs.
 - On macOS, [Xcode](https://developer.apple.com/xcode/) (not only Command Line Tools) so GPUI can compile Metal shaders
 - [cargo-packager](https://crates.io/crates/cargo-packager) if you want a packaged app (`cargo install cargo-packager --locked`): a `.app` / `.dmg` on macOS, an NSIS installer on Windows, or a `.deb` / `.AppImage` on Linux
 

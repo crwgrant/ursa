@@ -1,5 +1,5 @@
 use gpui::{
-    Action, AnyElement, Context, Corner, InteractiveElement, IntoElement, Menu, MenuItem, MouseButton, MouseDownEvent,
+    Action, Anchor, AnyElement, Context, InteractiveElement, IntoElement, Menu, MenuItem, MouseButton, MouseDownEvent,
     ParentElement, Pixels, Point, SharedString, StatefulInteractiveElement, Styled, Window, anchored, canvas, div, point,
     prelude::*, px, rgb,
 };
@@ -59,16 +59,19 @@ pub fn native_menus(sessions_enabled: bool) -> Vec<Menu> {
                 MenuItem::separator(),
                 MenuItem::action("Quit Ursa", Quit),
             ],
+            disabled: false,
         },
         native_file_menu(sessions_enabled),
         Menu {
             name: "Edit".into(),
             items: vec![MenuItem::action("Copy", Copy), MenuItem::action("Paste", Paste)],
+            disabled: false,
         },
         native_view_menu(sessions_enabled),
         Menu {
             name: "Window".into(),
             items: vec![MenuItem::action("Close", CloseTab)],
+            disabled: false,
         },
     ]
 }
@@ -89,6 +92,7 @@ fn native_file_menu(sessions_enabled: bool) -> Menu {
     Menu {
         name: "File".into(),
         items,
+        disabled: false,
     }
 }
 
@@ -116,6 +120,7 @@ fn native_view_menu(sessions_enabled: bool) -> Menu {
     Menu {
         name: "View".into(),
         items,
+        disabled: false,
     }
 }
 
@@ -387,7 +392,7 @@ pub fn render_popovers<S: AppMenuState + 'static>(
             .child(
                 anchored()
                     .position(open.origin)
-                    .anchor(Corner::TopLeft)
+                    .anchor(Anchor::TopLeft)
                     .snap_to_window()
                     .child(
                         div()

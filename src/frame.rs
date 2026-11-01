@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
 use gpui::{
-    Bounds, ContentMask, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Hsla, Pixels, Point, SharedString, TextRun,
+    Bounds, ContentMask, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Hsla, Pixels, Point, SharedString, TextAlign,
+    TextRun,
     UnderlineStyle, Window, fill, point, px, rgb, size,
 };
 use libghostty_vt::{
@@ -999,10 +1000,10 @@ fn paint_shaped_run(
             size: size(width, height),
         };
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            let _ = line.paint(point(x, y), height, window, cx);
+            let _ = line.paint(point(x, y), height, TextAlign::Left, None, window, cx);
         });
     } else {
-        let _ = line.paint(point(x, y), height, window, cx);
+        let _ = line.paint(point(x, y), height, TextAlign::Left, None, window, cx);
     }
 }
 

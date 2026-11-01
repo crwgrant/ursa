@@ -16,7 +16,7 @@ mod theme;
 use std::collections::HashMap;
 
 use gpui::{
-    Action, AnyElement, AnyView, App, Application, Bounds, Context, Corner, CursorStyle, DragMoveEvent, KeyBinding, KeyDownEvent,
+    Action, Anchor, AnyElement, AnyView, App, Bounds, Context, CursorStyle, DragMoveEvent, KeyBinding, KeyDownEvent,
     Keystroke, MenuItem, MouseButton, MouseDownEvent, Pixels, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
     actions, anchored, canvas, div, point, prelude::*, px, rgb, size,
 };
@@ -805,7 +805,7 @@ impl Workspace {
 
     fn focus_active(&self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(session) = self.focused_session().cloned() {
-            session.update(cx, |session, _cx| session.focus(window));
+            session.update(cx, |session, cx| session.focus(window, cx));
         }
         self.refresh_pane_cursors(cx);
     }
@@ -829,7 +829,7 @@ impl Workspace {
         let changed = tab.focused != index;
         tab.focused = index;
         if let Some(session) = tab.focused_session().cloned() {
-            session.update(cx, |session, _| session.focus(window));
+            session.update(cx, |session, cx| session.focus(window, cx));
         }
         self.refresh_pane_cursors(cx);
         if changed {
@@ -1334,7 +1334,7 @@ impl Workspace {
                     }),
                 )
                 .child(
-                    anchored().position(position).anchor(Corner::TopLeft).child(
+                    anchored().position(position).anchor(Anchor::TopLeft).child(
                         div()
                             .id("new-session-shell-menu")
                             .occlude()
@@ -2130,11 +2130,33 @@ fn workspace_key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-shift-]", FocusNextPane, None),
         KeyBinding::new("ctrl-shift-[", FocusPrevPane, None),
     ];
-    for number in 1..=9 {
-        let index = number - 1;
-        bindings.push(KeyBinding::new(&format!("cmd-{number}"), ActivateTab { index }, None));
-        bindings.push(KeyBinding::new(&format!("ctrl-shift-{number}"), ActivateTab { index }, None));
-        bindings.push(KeyBinding::new(&format!("ctrl-{number}"), ActivateSession { index }, None));
+    for (index, keystroke) in ["cmd-1", "cmd-2", "cmd-3", "cmd-4", "cmd-5", "cmd-6", "cmd-7", "cmd-8", "cmd-9"]
+        .into_iter()
+        .enumerate()
+    {
+        bindings.push(KeyBinding::new(keystroke, ActivateTab { index }, None));
+    }
+    for (index, keystroke) in [
+        "ctrl-shift-1",
+        "ctrl-shift-2",
+        "ctrl-shift-3",
+        "ctrl-shift-4",
+        "ctrl-shift-5",
+        "ctrl-shift-6",
+        "ctrl-shift-7",
+        "ctrl-shift-8",
+        "ctrl-shift-9",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        bindings.push(KeyBinding::new(keystroke, ActivateTab { index }, None));
+    }
+    for (index, keystroke) in ["ctrl-1", "ctrl-2", "ctrl-3", "ctrl-4", "ctrl-5", "ctrl-6", "ctrl-7", "ctrl-8", "ctrl-9"]
+        .into_iter()
+        .enumerate()
+    {
+        bindings.push(KeyBinding::new(keystroke, ActivateSession { index }, None));
     }
     bindings.push(KeyBinding::new("cmd-0", ActivateTab { index: 9 }, None));
     bindings.push(KeyBinding::new("ctrl-shift-0", ActivateTab { index: 9 }, None));
@@ -2143,13 +2165,14 @@ fn workspace_key_bindings() -> Vec<KeyBinding> {
 }
 
 fn main() {
-    let app = Application::new();
+    let app = gpui_kit::application();
     app.on_reopen(|cx| {
         if cx.windows().is_empty() {
             open_workspace_window(cx);
         }
     });
     app.run(|cx: &mut App| {
+        gpui_kit::init(cx);
         config::init(cx);
         cx.on_action(|_: &Quit, cx| quit_app(cx));
         cx.on_action(|_: &NewWindow, cx| {
@@ -2248,6 +2271,7 @@ fn workspace_window_options(cx: &App) -> WindowOptions {
         is_minimizable: true,
         window_decorations: None,
         tabbing_identifier: Some("Ursa".into()),
+        ..Default::default()
     }
 }
 
