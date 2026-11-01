@@ -449,6 +449,20 @@ impl Session {
         true
     }
 
+    pub fn send_tab(&mut self, shift: bool, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let keystroke = Keystroke {
+            modifiers: gpui::Modifiers {
+                shift,
+                ..gpui::Modifiers::default()
+            },
+            key: "tab".into(),
+            key_char: None,
+        };
+        let sent = self.send_keystroke(&keystroke, cx);
+        self.focus.focus(window, cx);
+        sent
+    }
+
     fn handle_mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.focus.focus(window, cx);
         if event.button != MouseButton::Left {
@@ -787,6 +801,15 @@ impl Render for Session {
             .id(("terminal", cx.entity_id().as_u64() as usize))
             .track_focus(&self.focus)
             .tab_stop(false)
+            .key_context("Terminal")
+            .on_action(cx.listener(|this, _: &crate::TerminalTab, window, cx| {
+                this.send_tab(false, window, cx);
+                cx.stop_propagation();
+            }))
+            .on_action(cx.listener(|this, _: &crate::TerminalBackTab, window, cx| {
+                this.send_tab(true, window, cx);
+                cx.stop_propagation();
+            }))
             .relative()
             .size_full()
             .bg(rgb(colors.term_bg))
