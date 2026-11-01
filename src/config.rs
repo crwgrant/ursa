@@ -1782,9 +1782,12 @@ mod tests {
 
     #[test]
     fn picks_notomono_when_installed_else_os_font() {
-        let installed = vec!["Menlo".into(), "NotoMono Nerd Font".into()];
+        let installed = vec![theme::FONT_FAMILY.into(), "NotoMono Nerd Font".into()];
         assert_eq!(pick_font_family(None, &installed), "NotoMono Nerd Font");
-        assert_eq!(pick_font_family(None, &["Menlo".into()]), "Menlo");
+        assert_eq!(
+            pick_font_family(None, &[theme::FONT_FAMILY.into()]),
+            theme::FONT_FAMILY
+        );
         assert_eq!(
             pick_font_family(Some("SF Mono"), &["sf mono".into(), "NotoMono Nerd Font".into()]),
             "sf mono"
