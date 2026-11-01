@@ -91,16 +91,6 @@ impl ThemeCatalog {
             .map(|theme| theme.colors)
             .unwrap_or_else(fallback_colors)
     }
-
-    pub fn label_for(&self, id: &str) -> String {
-        let key = normalize_id(id);
-        self.themes
-            .iter()
-            .find(|theme| theme.id == key)
-            .map(|theme| theme.label.clone())
-            .filter(|label| !label.is_empty())
-            .unwrap_or_else(|| display_label(&key))
-    }
 }
 
 pub fn colors(cx: &App) -> Colors {
@@ -112,11 +102,7 @@ pub fn choices(cx: &App) -> Vec<(String, String)> {
         .themes
         .iter()
         .map(|theme| (theme.id.clone(), theme.label.clone()))
-        .collect()
-}
-
-pub fn label_for(id: &str, cx: &App) -> String {
-    catalog(cx).label_for(id)
+            .collect()
 }
 
 pub fn catalog(cx: &App) -> ThemeCatalog {

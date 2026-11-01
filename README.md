@@ -1,6 +1,6 @@
 # Ursa
 
-A native terminal with a reliable bearing, built in Rust with [GPUI](https://github.com/zed-industries/zed) and [libghostty-vt](https://github.com/uzaaft/libghostty-rs). Each window can show a left sidebar of sessions; each session has horizontal tabs, and each tab can split into panes that each talk to your login shell over a PTY. **Settings → Session sidebar** can hide the list so the window is only horizontal tabs.
+A native terminal with a reliable bearing, built in Rust with [GPUI Kit](https://gpui-kit.com) (GPUI Fast) and [libghostty-vt](https://github.com/uzaaft/libghostty-rs). Each window can show a left sidebar of sessions; each session has horizontal tabs, and each tab can split into panes that each talk to your login shell over a PTY. **Settings → Session sidebar** can hide the list so the window is only horizontal tabs.
 
 ![Ursa](docs/screenshot.png)
 
@@ -15,7 +15,7 @@ A native terminal with a reliable bearing, built in Rust with [GPUI](https://git
 - **⌘-click** `http(s)` URLs to open them in the browser (hold **⌘** to highlight the link first)
 - **⌘-click** local filesystem paths to open Finder at that folder (a file path opens the parent directory). Paths from a remote OSC 7 session are not treated as folders on this machine
 - Right-click a URL, URI, or path for **Copy**, **Paste**, and **Open Link** (or **Open Folder**)
-- In-app toasts for copy and paste feedback (bottom-right, click or wait to dismiss)
+- In-app toasts for copy and paste feedback (click or wait to dismiss)
 - **⌘K** clears the screen and scrollback; the shell redraws the prompt at the top
 - Settings window (**⌘,** or **Ursa → Settings**) for theme, font family, size, cursor style, scrollback, session restore, and the session sidebar; values are stored in an Ursa-owned config file you can also edit by hand
 - About window (**Ursa → About Ursa**) with the version, app icon, and a link to the GitHub repository
@@ -300,4 +300,4 @@ Config parse/round-trip tests live in `src/config.rs` (`cargo test`). A broader 
 
 Ursa is MIT. See [LICENSE](LICENSE).
 
-It uses [libghostty](https://github.com/ghostty-org/ghostty) (MIT) through the [libghostty-vt](https://github.com/uzaaft/libghostty-rs) Rust bindings (MIT OR Apache-2.0), and [GPUI](https://gpui.rs) (Apache-2.0). Copyright notices are in [NOTICE](NOTICE). Full license texts are in [licenses/](licenses/).
+It uses [libghostty](https://github.com/ghostty-org/ghostty) (MIT) through the [libghostty-vt](https://github.com/uzaaft/libghostty-rs) Rust bindings (MIT OR Apache-2.0), and [GPUI Kit](https://gpui-kit.com) with [GPUI Fast](https://github.com/longbridge/gpui-fast) on [GPUI](https://gpui.rs) (Apache-2.0). Copyright notices are in [NOTICE](NOTICE). Full license texts are in [licenses/](licenses/).

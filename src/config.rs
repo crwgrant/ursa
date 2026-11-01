@@ -540,13 +540,6 @@ impl SessionSidebar {
         matches!(self, Self::On)
     }
 
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::On => "On",
-            Self::Off => "Off",
-        }
-    }
-
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
             "on" | "true" | "yes" | "show" | "1" => Some(Self::On),
@@ -562,10 +555,6 @@ impl SessionSidebar {
             toml::Value::String(text) => Self::parse(text),
             _ => None,
         }
-    }
-
-    pub fn all() -> [Self; 2] {
-        [Self::On, Self::Off]
     }
 }
 
@@ -998,6 +987,7 @@ pub fn font_size_presets() -> &'static [f32] {
     ]
 }
 
+#[cfg(test)]
 pub fn parse_scrollback(text: &str) -> Option<u32> {
     let trimmed = text.trim();
     if trimmed.is_empty() {

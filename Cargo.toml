@@ -31,8 +31,7 @@ installer-icon = "packaging/AppIcon.ico"
 
 [dependencies]
 flume = "0.11"
-gpui = { package = "gpui-fast", version = "0.1.12" }
-gpui-kit = { version = "0.8.1", features = ["gpui-fast"] }
+gpui = { package = "gpui-kit", version = "0.8.1", features = ["gpui-fast"] }
 libghostty-vt = { git = "https://github.com/uzaaft/libghostty-rs", rev = "575ed6b8" }
 portable-pty = "0.9"
 serde = { version = "1", features = ["derive"] }

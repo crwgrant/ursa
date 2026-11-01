@@ -1,12 +1,12 @@
 use std::sync::{Arc, OnceLock};
 
 use gpui::{
-    App, Bounds, Context, CursorStyle, DisplayId, FocusHandle, Global, Image, ImageFormat, InteractiveElement, IntoElement,
-    KeyDownEvent, MouseButton, ObjectFit, ParentElement, Render, Styled, TitlebarOptions, Window, WindowBounds, WindowHandle,
-    WindowOptions, div, img, prelude::*, px, rgb, size,
+    App, Bounds, Context, DisplayId, FocusHandle, Global, Image, ImageFormat, IntoElement, KeyDownEvent, ObjectFit, Render,
+    TitlebarOptions, Window, WindowBounds, WindowOptions, img, prelude::*, px, size,
 };
+use gpui::component::{h_flex, label::Label, link::Link, v_flex};
 
-use crate::{notify, theme};
+use crate::notify;
 
 const APP_NAME: &str = "Ursa";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -16,7 +16,7 @@ const ICON_PNG: &[u8] = include_bytes!("../packaging/AppIcon-small.png");
 
 #[derive(Default)]
 struct AboutUi {
-    window: Option<WindowHandle<AboutPage>>,
+    window: Option<gpui::AnyWindowHandle>,
 }
 
 impl Global for AboutUi {}
@@ -29,7 +29,6 @@ impl AboutPage {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let focus = cx.focus_handle();
         focus.focus(window, cx);
-        cx.observe_global::<theme::ThemeCatalog>(|_, cx| cx.notify()).detach();
         Self { focus }
     }
 
@@ -47,36 +46,23 @@ impl AboutPage {
 
 pub fn open(cx: &mut App) {
     if let Some(handle) = cx.try_global::<AboutUi>().and_then(|ui| ui.window) {
-        if handle.update(cx, |_, window, _cx| window.activate_window()).is_ok() {
+        if crate::activate_window(handle, cx) {
             return;
         }
     }
 
-    let display_id = host_display_id(cx);
-    match cx.open_window(window_options(cx, display_id), |window, cx| cx.new(|cx| AboutPage::new(window, cx))) {
-        Ok(handle) => {
-            let _ = handle.update(cx, |_, window, cx| {
-                window.on_window_should_close(cx, |_, cx| {
-                    if cx.has_global::<AboutUi>() {
-                        cx.global_mut::<AboutUi>().window = None;
-                    }
-                    crate::quit_if_last_window(cx);
-                    true
-                });
+    let display_id = crate::host_display_id(cx);
+    match gpui::open_window(window_options(cx, display_id), cx, |window, cx| cx.new(|cx| AboutPage::new(window, cx))) {
+        Ok((handle, _)) => {
+            crate::on_aux_window_close(handle, cx, |cx| {
+                if cx.has_global::<AboutUi>() {
+                    cx.global_mut::<AboutUi>().window = None;
+                }
             });
             cx.default_global::<AboutUi>().window = Some(handle);
         }
         Err(error) => notify::show(cx, format!("Couldn't open About: {error}")),
     }
-}
-
-fn host_display_id(cx: &mut App) -> Option<DisplayId> {
-    cx.active_window().and_then(|handle| {
-        handle
-            .update(cx, |_, window, cx| window.display(cx).map(|display| display.id()))
-            .ok()
-            .flatten()
-    })
 }
 
 fn window_options(cx: &App, display_id: Option<DisplayId>) -> WindowOptions {
@@ -119,67 +105,34 @@ fn github_label() -> &'static str {
 
 impl Render for AboutPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let colors = theme::colors(cx);
-        div()
+        v_flex()
             .id("about")
             .track_focus(&self.focus)
             .size_full()
-            .flex()
-            .flex_col()
             .items_center()
             .justify_center()
             .gap_3()
             .px_6()
-            .bg(rgb(colors.window))
-            .text_color(rgb(colors.text))
-            .font_family(theme::UI_FONT_FAMILY)
             .on_key_down(cx.listener(|this, event, window, cx| this.handle_key(event, window, cx)))
             .on_action(cx.listener(|this, _: &crate::CloseTab, window, cx| this.close_window(window, cx)))
+            .child(img(app_icon()).w(px(96.0)).h(px(96.0)).object_fit(ObjectFit::Contain).rounded_lg())
+            .child(Label::new(APP_NAME).text_xl())
+            .child(Label::new(TAGLINE).text_sm())
+            .child(Label::new(format!("Version {VERSION}")).text_sm())
+            .child(Link::new("github-link").href(GITHUB_URL).child(github_label()))
             .child(
-                img(app_icon())
-                    .w(px(96.0))
-                    .h(px(96.0))
-                    .object_fit(ObjectFit::Contain)
-                    .rounded_lg(),
-            )
-            .child(div().text_xl().font_weight(gpui::FontWeight::SEMIBOLD).child(APP_NAME))
-            .child(div().text_sm().text_color(rgb(colors.text_dim)).child(TAGLINE))
-            .child(div().text_sm().child(format!("Version {VERSION}")))
-            .child(
-                div()
-                    .id("github-link")
-                    .text_sm()
-                    .text_color(rgb(colors.accent))
-                    .cursor(CursorStyle::PointingHand)
-                    .hover(|style| style.underline())
-                    .child(github_label())
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                        cx.open_url(GITHUB_URL);
-                        cx.stop_propagation();
-                    }),
-            )
-            .child(
-                div()
+                v_flex()
                     .mt_2()
-                    .flex()
-                    .flex_col()
                     .items_center()
                     .gap_1()
-                    .text_xs()
-                    .text_color(rgb(colors.text_dim))
-                    .child("Uses libghostty by Mitchell Hashimoto and Ghostty contributors.")
-                    .child("Uses GPUI by Zed Industries, Inc.")
+                    .child(Label::new("Uses libghostty by Mitchell Hashimoto and Ghostty contributors.").text_xs())
+                    .child(Label::new("Uses GPUI Kit and GPUI Fast, built on GPUI by Zed Industries, Inc.").text_xs())
                     .child(
-                        div()
-                            .id("notice-link")
-                            .text_color(rgb(colors.accent))
-                            .cursor(CursorStyle::PointingHand)
-                            .hover(|style| style.underline())
-                            .child("Acknowledgments")
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                                cx.open_url(&format!("{GITHUB_URL}/blob/main/NOTICE"));
-                                cx.stop_propagation();
-                            }),
+                        h_flex().child(
+                            Link::new("notice-link")
+                                .href(format!("{GITHUB_URL}/blob/main/NOTICE"))
+                                .child("Acknowledgments"),
+                        ),
                     ),
             )
     }
