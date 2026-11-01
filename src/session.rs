@@ -70,6 +70,7 @@ enum Command {
     SelectRelease(SelectPointer),
     Copy(flume::Sender<Option<String>>),
     Paste(String),
+    SelectAll,
     ClearScreen,
     SetScrollback(u32),
     SetTheme(theme::Colors),
@@ -304,6 +305,10 @@ impl Session {
 
     pub fn has_selection(&self) -> bool {
         self.frame.has_selection
+    }
+
+    pub fn select_all(&self) {
+        let _ = self.commands.send(Command::SelectAll);
     }
 
     pub fn copy_selection(&self, cx: &mut Context<Self>) {
@@ -792,6 +797,7 @@ impl Render for Session {
                 CursorStyle::IBeam
             })
             .on_key_down(cx.listener(|this, event, _window, cx| this.handle_key(event, cx)))
+            .on_action(cx.listener(|this, _: &crate::SelectAll, _window, _cx| this.select_all()))
             .when(self.frame.has_selection, |el| {
                 el.on_action(cx.listener(|this, _: &crate::Copy, _window, cx| this.copy_selection(cx)))
             })
@@ -951,10 +957,10 @@ fn reserved_shortcut(modifiers: &gpui::Modifiers, key: &str, cx: &App) -> bool {
 
 fn reserved_app_shortcut(modifiers: &gpui::Modifiers, key: &str) -> bool {
     let digit = is_digit_key(key);
-    if modifiers.platform && (matches!(key, "q" | "t" | "w" | "n" | "c" | "v" | "k" | "d" | "[" | "]" | ",") || digit) {
+    if modifiers.platform && (matches!(key, "q" | "t" | "w" | "n" | "c" | "v" | "k" | "d" | "a" | "[" | "]" | ",") || digit) {
         return true;
     }
-    if modifiers.control && modifiers.shift && (matches!(key, "t" | "w" | "c" | "v" | "d" | "k" | "[" | "]") || digit) {
+    if modifiers.control && modifiers.shift && (matches!(key, "t" | "w" | "c" | "v" | "d" | "k" | "a" | "[" | "]") || digit) {
         return true;
     }
     if modifiers.control && modifiers.alt && matches!(key, "t" | "w" | "d") {
@@ -1227,6 +1233,12 @@ fn run_emulator(
                 let text = selection_text(&terminal);
                 let _ = reply.send(text);
             }
+            Command::SelectAll => {
+                gesture.reset(&terminal);
+                if let Some(selection) = terminal.select_all()? {
+                    terminal.set_selection(Some(&selection))?;
+                }
+            }
             Command::Paste(text) => {
                 gesture.reset(&terminal);
                 let _ = terminal.set_selection(None);
@@ -1446,6 +1458,15 @@ mod tests {
         assert!(reserved_app_shortcut(&ctrl_q, "q"));
         assert!(reserved_app_shortcut(&ctrl_shift_k, "k"));
         assert!(!reserved_app_shortcut(&ctrl_n, "k"));
+        assert!(reserved_app_shortcut(
+            &Modifiers {
+                platform: true,
+                ..Modifiers::default()
+            },
+            "a"
+        ));
+        assert!(reserved_app_shortcut(&ctrl_shift_k, "a"));
+        assert!(!reserved_app_shortcut(&ctrl_n, "a"));
         assert!(is_digit_key("3"));
     }
 }

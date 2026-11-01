@@ -15,6 +15,7 @@ A native terminal with a reliable bearing, built in Rust with [GPUI Kit](https:/
 - **⌘-click** `http(s)` URLs to open them in the browser (hold **⌘** to highlight the link first)
 - **⌘-click** local filesystem paths to open Finder at that folder (a file path opens the parent directory). Paths from a remote OSC 7 session are not treated as folders on this machine
 - Right-click a URL, URI, or path for **Copy**, **Paste**, and **Open Link** (or **Open Folder**)
+- **⌘A** selects all text in the screen and scrollback; copy with **⌘C**
 - In-app toasts for copy and paste feedback (click or wait to dismiss)
 - **⌘K** clears the screen and scrollback; the shell redraws the prompt at the top
 - Settings window (**⌘,** or **Ursa → Settings**) for theme, font family, size, cursor style, scrollback, session restore, and the session sidebar; values are stored in an Ursa-owned config file you can also edit by hand
@@ -128,11 +129,12 @@ cargo-packager only uses **PNG** icons on Linux (it skips `.icns` and `.ico`). I
 | Open URL or folder | ⌘-click or right-click → Open Link |
 | Copy link | Right-click a URL/path → Copy |
 | Copy selection | ⌘C |
+| Select all (screen and scrollback) | ⌘A |
 | Paste | ⌘V or right-click a URL/path → Paste |
 | Clear screen | ⌘K |
 | Settings | ⌘, |
 
-On Windows, use **Ctrl+Shift** in place of **⌘** (for example **Ctrl+Shift+T** for a new tab, **Ctrl+Alt+T** for a new session, **Ctrl+Alt+W** to close a session, **Ctrl+Shift+1–9** to switch tabs, **Ctrl+1–9** to switch sessions, **Ctrl+Shift+C** / **Ctrl+Shift+V** to copy and paste, **Ctrl+Shift+D** to split right, **Ctrl+Alt+D** to split down, **Ctrl+Shift+] / Ctrl+Shift+[** to move pane focus). **Ctrl+C** still goes to the shell. Settings is **Ctrl+,**. New window is **Ctrl+N**, quit is **Ctrl+Q**, clear screen is **Ctrl+Shift+K**, and **Ctrl-click** opens a URL or folder.
+On Windows, use **Ctrl+Shift** in place of **⌘** (for example **Ctrl+Shift+T** for a new tab, **Ctrl+Alt+T** for a new session, **Ctrl+Alt+W** to close a session, **Ctrl+Shift+1–9** to switch tabs, **Ctrl+1–9** to switch sessions, **Ctrl+Shift+C** / **Ctrl+Shift+V** to copy and paste, **Ctrl+Shift+A** to select all, **Ctrl+Shift+D** to split right, **Ctrl+Alt+D** to split down, **Ctrl+Shift+] / Ctrl+Shift+[** to move pane focus). **Ctrl+C** and **Ctrl+A** still go to the shell. Settings is **Ctrl+,**. New window is **Ctrl+N**, quit is **Ctrl+Q**, clear screen is **Ctrl+Shift+K**, and **Ctrl-click** opens a URL or folder.
 
 ## Configuration
 
@@ -186,7 +188,7 @@ The Settings window writes `config.toml` when you change a value. Editing the co
 
 - [x] Copy the current selection with ⌘C
 - [x] Right-click menu: Copy, Paste, Open Link
-- [ ] Select all in scrollback (⌘A)
+- [x] Select all in scrollback (⌘A)
 - [ ] Optional copy-on-select
 
 ### Window and sessions
@@ -260,7 +262,7 @@ Config parse/round-trip tests live in `src/config.rs` (`cargo test`). A broader 
 - Shift-produced characters (`:@#!` and the rest of the punctuation set) encode to the PTY
 - ⌘← / ⌘→ send beginning/end of line; ⌥← / ⌥→ send word jumps
 - ⌥⌫ / ⌥⌦ send word-kill; ⌘⌫ / ⌘⌦ send kill to start/end of line
-- Reserved shortcuts (⌘Q / ⌘⇧T / ⌘T / ⌘W / ⌘⇧W / ⌘D / ⌘⇧D / ⌘[ / ⌘] / ⌘1–⌘9 / ⌃1–⌃9 / ⌘,) are not forwarded as terminal keys
+- Reserved shortcuts (⌘Q / ⌘⇧T / ⌘T / ⌘W / ⌘⇧W / ⌘D / ⌘⇧D / ⌘A / ⌘[ / ⌘] / ⌘1–⌘9 / ⌃1–⌃9 / ⌘,) are not forwarded as terminal keys
 
 ### Links and paths
 

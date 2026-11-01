@@ -2,7 +2,7 @@ use gpui::{Menu, MenuItem};
 
 use crate::{
     ActivateSession, ActivateTab, ClearScreen, CloseSession, CloseTab, Copy, FocusNextPane, FocusPrevPane, NewSession, NewTab,
-    NewWindow, OpenAbout, OpenSettings, Paste, Quit, SplitDown, SplitRight,
+    NewWindow, OpenAbout, OpenSettings, Paste, Quit, SelectAll, SplitDown, SplitRight,
 };
 
 pub fn native_menus(sessions_enabled: bool) -> Vec<Menu> {
@@ -21,7 +21,12 @@ pub fn native_menus(sessions_enabled: bool) -> Vec<Menu> {
         native_file_menu(sessions_enabled),
         Menu {
             name: "Edit".into(),
-            items: vec![MenuItem::action("Copy", Copy), MenuItem::action("Paste", Paste)],
+            items: vec![
+                MenuItem::action("Copy", Copy),
+                MenuItem::action("Paste", Paste),
+                MenuItem::separator(),
+                MenuItem::action("Select All", SelectAll),
+            ],
             disabled: false,
         },
         native_view_menu(sessions_enabled),
@@ -129,6 +134,8 @@ mod tests {
         assert!(menus[0].1.contains(&"Quit Ursa".to_string()));
         assert_eq!(menus[1].0, "File");
         assert!(!menus[1].1.contains(&"Settings…".to_string()));
+        assert_eq!(menus[2].0, "Edit");
+        assert!(menus[2].1.contains(&"Select All".to_string()));
     }
 
     #[test]
