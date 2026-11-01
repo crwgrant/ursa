@@ -41,6 +41,7 @@ actions!(
         CloseSession,
         Copy,
         Paste,
+        SelectAll,
         ClearScreen,
         OpenSettings,
         OpenAbout,
@@ -947,6 +948,12 @@ impl Workspace {
         }
     }
 
+    fn select_all_active(&self, cx: &mut Context<Self>) {
+        if let Some(session) = self.focused_session().cloned() {
+            session.update(cx, |session, _cx| session.select_all());
+        }
+    }
+
     fn clear_active(&self, cx: &mut Context<Self>) {
         if let Some(session) = self.focused_session().cloned() {
             session.update(cx, |session, _cx| session.clear_screen());
@@ -1194,6 +1201,7 @@ impl Render for Workspace {
             .when(session::clipboard_has_text(cx), |el| {
                 el.on_action(cx.listener(|this, _: &Paste, _window, cx| this.paste_active(cx)))
             })
+            .on_action(cx.listener(|this, _: &SelectAll, _window, cx| this.select_all_active(cx)))
             .on_action(cx.listener(|this, _: &ClearScreen, _window, cx| this.clear_active(cx)))
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 if this.forward_tab_to_focused(&event.keystroke, cx) {
@@ -1942,6 +1950,7 @@ fn workspace_key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-shift-w", CloseSession, None),
         KeyBinding::new("cmd-c", Copy, None),
         KeyBinding::new("cmd-v", Paste, None),
+        KeyBinding::new("cmd-a", SelectAll, None),
         KeyBinding::new("cmd-k", ClearScreen, None),
         KeyBinding::new("cmd-,", OpenSettings, None),
         KeyBinding::new("ctrl-,", OpenSettings, None),
@@ -1951,6 +1960,7 @@ fn workspace_key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-shift-w", CloseTab, None),
         KeyBinding::new("ctrl-shift-c", Copy, None),
         KeyBinding::new("ctrl-shift-v", Paste, None),
+        KeyBinding::new("ctrl-shift-a", SelectAll, None),
         KeyBinding::new("cmd-d", SplitRight, None),
         KeyBinding::new("cmd-shift-d", SplitDown, None),
         KeyBinding::new("cmd-]", FocusNextPane, None),
