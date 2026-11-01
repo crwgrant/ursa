@@ -23,6 +23,70 @@ pub struct Frame {
     pub rows: Vec<FrameRow>,
     pub cursor: Option<CursorCell>,
     pub has_selection: bool,
+    pub scrollbar: Scrollbar,
+}
+
+/// Ghostty viewport scrollbar, in rows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Scrollbar {
+    pub total: u64,
+    pub offset: u64,
+    pub len: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScrollbarThumb {
+    pub top: f32,
+    pub height: f32,
+}
+
+impl Scrollbar {
+    pub fn overflow(&self) -> bool {
+        self.total > self.len && self.len > 0
+    }
+
+    pub fn max_offset(&self) -> u64 {
+        self.total.saturating_sub(self.len)
+    }
+
+    pub fn thumb(&self, track: f32) -> ScrollbarThumb {
+        let track = track.max(1.0);
+        if !self.overflow() {
+            return ScrollbarThumb { top: 0.0, height: track };
+        }
+        let min_thumb = (track * 0.12).clamp(18.0, 48.0);
+        let height = ((self.len as f32 / self.total as f32) * track).max(min_thumb).min(track);
+        let travel = (track - height).max(0.0);
+        let t = if self.max_offset() == 0 {
+            0.0
+        } else {
+            self.offset as f32 / self.max_offset() as f32
+        };
+        ScrollbarThumb {
+            top: t.clamp(0.0, 1.0) * travel,
+            height,
+        }
+    }
+
+    pub fn offset_at(&self, thumb_top: f32, track: f32) -> u64 {
+        let thumb = self.thumb(track);
+        let travel = (track - thumb.height).max(0.0);
+        if travel <= 0.0 || self.max_offset() == 0 {
+            return 0;
+        }
+        let t = (thumb_top / travel).clamp(0.0, 1.0);
+        (t * self.max_offset() as f32).round() as u64
+    }
+}
+
+impl From<libghostty_vt::terminal::Scrollbar> for Scrollbar {
+    fn from(value: libghostty_vt::terminal::Scrollbar) -> Self {
+        Self {
+            total: value.total,
+            offset: value.offset,
+            len: value.len,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -202,12 +266,15 @@ pub fn capture<'alloc>(
         None
     };
 
+    let scrollbar = terminal.scrollbar().ok().map(Scrollbar::from).unwrap_or_default();
+
     Ok(Frame {
         background: Rgb::from_ghostty(colors.background),
         _foreground: Rgb::from_ghostty(colors.foreground),
         rows,
         cursor,
         has_selection,
+        scrollbar,
     })
 }
 
@@ -1155,6 +1222,7 @@ mod tests {
             }],
             cursor: Some(CursorCell { x: 2, y: 0 }),
             has_selection: false,
+            scrollbar: Scrollbar::default(),
         };
         assert_eq!(cursor_cover(&frame), Some((1, 0, 2)));
         let mut on_ascii = frame.clone();
@@ -1176,5 +1244,43 @@ mod tests {
                 end_col: 3,
             }]
         );
+    }
+
+    #[test]
+    fn scrollbar_thumb_tracks_offset() {
+        let scroll = Scrollbar {
+            total: 200,
+            offset: 0,
+            len: 40,
+        };
+        let top = scroll.thumb(100.0);
+        assert!(scroll.overflow());
+        assert_eq!(top.top, 0.0);
+        assert!(top.height < 100.0);
+
+        let bottom = Scrollbar {
+            offset: 160,
+            ..scroll
+        }
+        .thumb(100.0);
+        assert!((bottom.top + bottom.height - 100.0).abs() < 0.01);
+
+        let mid = Scrollbar {
+            offset: 80,
+            ..scroll
+        };
+        let thumb = mid.thumb(100.0);
+        assert_eq!(mid.offset_at(thumb.top, 100.0), 80);
+    }
+
+    #[test]
+    fn scrollbar_hidden_without_overflow() {
+        let scroll = Scrollbar {
+            total: 24,
+            offset: 0,
+            len: 24,
+        };
+        assert!(!scroll.overflow());
+        assert_eq!(scroll.offset_at(50.0, 100.0), 0);
     }
 }
