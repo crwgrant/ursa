@@ -3,6 +3,7 @@ use gpui::{
     Window, WindowBounds, WindowOptions, prelude::*, px, size,
 };
 use gpui::component::{
+    ActiveTheme as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     setting::{NumberFieldOptions, SettingField, SettingGroup, SettingItem, SettingPage, Settings},
@@ -89,10 +90,13 @@ fn window_options(cx: &App, display_id: Option<DisplayId>) -> WindowOptions {
 
 impl Render for SettingsPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
         v_flex()
             .id("settings")
             .track_focus(&self.focus)
             .size_full()
+            .bg(theme.background)
+            .text_color(theme.foreground)
             .on_key_down(cx.listener(|this, event, window, cx| this.handle_key(event, window, cx)))
             .on_action(cx.listener(|this, _: &crate::CloseTab, window, cx| this.close_window(window, cx)))
             .child(settings_view(cx))

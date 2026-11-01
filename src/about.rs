@@ -4,7 +4,7 @@ use gpui::{
     App, Bounds, Context, DisplayId, FocusHandle, Global, Image, ImageFormat, IntoElement, KeyDownEvent, ObjectFit, Render,
     TitlebarOptions, Window, WindowBounds, WindowOptions, img, prelude::*, px, size,
 };
-use gpui::component::{h_flex, label::Label, link::Link, v_flex};
+use gpui::component::{ActiveTheme as _, h_flex, label::Label, link::Link, v_flex};
 
 use crate::notify;
 
@@ -105,6 +105,7 @@ fn github_label() -> &'static str {
 
 impl Render for AboutPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
         v_flex()
             .id("about")
             .track_focus(&self.focus)
@@ -113,11 +114,13 @@ impl Render for AboutPage {
             .justify_center()
             .gap_3()
             .px_6()
+            .bg(theme.background)
+            .text_color(theme.foreground)
             .on_key_down(cx.listener(|this, event, window, cx| this.handle_key(event, window, cx)))
             .on_action(cx.listener(|this, _: &crate::CloseTab, window, cx| this.close_window(window, cx)))
             .child(img(app_icon()).w(px(96.0)).h(px(96.0)).object_fit(ObjectFit::Contain).rounded_lg())
             .child(Label::new(APP_NAME).text_xl())
-            .child(Label::new(TAGLINE).text_sm())
+            .child(Label::new(TAGLINE).text_sm().text_color(theme.muted_foreground))
             .child(Label::new(format!("Version {VERSION}")).text_sm())
             .child(Link::new("github-link").href(GITHUB_URL).child(github_label()))
             .child(
@@ -125,8 +128,16 @@ impl Render for AboutPage {
                     .mt_2()
                     .items_center()
                     .gap_1()
-                    .child(Label::new("Uses libghostty by Mitchell Hashimoto and Ghostty contributors.").text_xs())
-                    .child(Label::new("Uses GPUI Kit and GPUI Fast, built on GPUI by Zed Industries, Inc.").text_xs())
+                    .child(
+                        Label::new("Uses libghostty by Mitchell Hashimoto and Ghostty contributors.")
+                            .text_xs()
+                            .text_color(theme.muted_foreground),
+                    )
+                    .child(
+                        Label::new("Uses GPUI Kit and GPUI Fast, built on GPUI by Zed Industries, Inc.")
+                            .text_xs()
+                            .text_color(theme.muted_foreground),
+                    )
                     .child(
                         h_flex().child(
                             Link::new("notice-link")
