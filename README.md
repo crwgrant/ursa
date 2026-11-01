@@ -107,6 +107,10 @@ cargo-packager only uses **PNG** icons on Linux (it skips `.icns` and `.ico`). I
 ./packaging/make-linux-icons.sh
 ```
 
+## Release builds
+
+Publishing a GitHub Release runs `.github/workflows/release.yml`. That workflow packages Ursa on macOS (`.dmg`), Windows (NSIS installer), and Linux (`.deb` and `.AppImage`) and attaches those files to the release. It does not run on pull requests or ordinary pushes.
+
 ## Shortcuts
 
 | Action | Shortcut |
@@ -219,7 +223,7 @@ The Settings window writes `config.toml` when you change a value. Editing the co
 
 ### Windows
 
-- [ ] CI that builds a Windows installer (see [Package (Windows)](#package-windows))
+- [x] CI that builds Windows, macOS, and Linux packages when a GitHub Release is published
 - [ ] Code-sign the `.exe` so SmartScreen does not warn on first run
 - [ ] Optional `%APPDATA%\Ursa` config location (today `~/.config/ursa`, or `XDG_CONFIG_HOME`)
 - [ ] Fall back to Segoe UI if `.SystemUIFont` does not resolve for chrome
