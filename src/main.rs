@@ -42,6 +42,8 @@ actions!(
         Copy,
         Paste,
         SelectAll,
+        TerminalTab,
+        TerminalBackTab,
         ClearScreen,
         OpenSettings,
         OpenAbout,
@@ -960,14 +962,18 @@ impl Workspace {
         }
     }
 
-    fn forward_tab_to_focused(&self, keystroke: &Keystroke, cx: &mut Context<Self>) -> bool {
-        if keystroke.key != "tab" || keystroke.modifiers.platform || keystroke.modifiers.control || keystroke.modifiers.alt {
-            return false;
-        }
+    fn send_terminal_tab(&self, shift: bool, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let Some(session) = self.focused_session().cloned() else {
             return false;
         };
-        session.update(cx, |session, cx| session.send_keystroke(keystroke, cx))
+        session.update(cx, |session, cx| session.send_tab(shift, window, cx))
+    }
+
+    fn forward_tab_to_focused(&self, keystroke: &Keystroke, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if keystroke.key != "tab" || keystroke.modifiers.platform || keystroke.modifiers.control || keystroke.modifiers.alt {
+            return false;
+        }
+        self.send_terminal_tab(keystroke.modifiers.shift, window, cx)
     }
 
     fn apply_config(&self, cx: &mut Context<Self>) {
@@ -1203,8 +1209,19 @@ impl Render for Workspace {
             })
             .on_action(cx.listener(|this, _: &SelectAll, _window, cx| this.select_all_active(cx)))
             .on_action(cx.listener(|this, _: &ClearScreen, _window, cx| this.clear_active(cx)))
-            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                if this.forward_tab_to_focused(&event.keystroke, cx) {
+            .key_context("Workspace")
+            .on_action(cx.listener(|this, _: &TerminalTab, window, cx| {
+                if this.send_terminal_tab(false, window, cx) {
+                    cx.stop_propagation();
+                }
+            }))
+            .on_action(cx.listener(|this, _: &TerminalBackTab, window, cx| {
+                if this.send_terminal_tab(true, window, cx) {
+                    cx.stop_propagation();
+                }
+            }))
+            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                if this.forward_tab_to_focused(&event.keystroke, window, cx) {
                     cx.stop_propagation();
                 }
             }))
@@ -1549,6 +1566,7 @@ fn settings_button(_cx: &App) -> impl IntoElement {
         Button::new("open-settings")
             .ghost()
             .w_full()
+            .tab_stop(false)
             .label("Settings")
             .tooltip(format!("Settings ({})", app_menu::settings_shortcut()))
             .on_click(|_, _, cx| {
@@ -1578,6 +1596,7 @@ fn new_tab_button(cx: &mut Context<Workspace>) -> impl IntoElement {
     let button = Button::new("new-tab")
         .ghost()
         .compact()
+        .tab_stop(false)
         .label("+")
         .tooltip(format!("New Session ({})", app_menu::new_session_shortcut()));
     if !show_shell_picker {
@@ -1623,6 +1642,7 @@ fn pane_settings_button(cx: &mut Context<Workspace>) -> impl IntoElement {
         Button::new("pane-settings")
             .ghost()
             .large()
+            .tab_stop(false)
             .label("Settings")
             .tooltip(format!("Settings ({})", app_menu::settings_shortcut()))
             .on_click(|_, _, cx| {
@@ -1639,6 +1659,7 @@ fn new_pane_tab_button(cx: &mut Context<Workspace>) -> impl IntoElement {
         Button::new("new-pane-tab")
             .ghost()
             .large()
+            .tab_stop(false)
             .label("+")
             .tooltip(format!("New Tab ({})", app_menu::new_tab_shortcut()))
             .on_click(move |_, window, cx| {
@@ -1951,6 +1972,10 @@ fn workspace_key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-c", Copy, None),
         KeyBinding::new("cmd-v", Paste, None),
         KeyBinding::new("cmd-a", SelectAll, None),
+        KeyBinding::new("tab", TerminalTab, Some("Workspace")),
+        KeyBinding::new("shift-tab", TerminalBackTab, Some("Workspace")),
+        KeyBinding::new("tab", TerminalTab, Some("Terminal")),
+        KeyBinding::new("shift-tab", TerminalBackTab, Some("Terminal")),
         KeyBinding::new("cmd-k", ClearScreen, None),
         KeyBinding::new("cmd-,", OpenSettings, None),
         KeyBinding::new("ctrl-,", OpenSettings, None),
