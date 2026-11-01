@@ -49,4 +49,4 @@ jobs:
         run: cargo fmt --check
 
       - name: Test
-        run: cargo test --offline
+        run: cargo test
