@@ -1,10 +1,10 @@
 use std::sync::{Arc, OnceLock};
 
+use gpui::component::{ActiveTheme as _, h_flex, label::Label, link::Link, v_flex};
 use gpui::{
     App, Bounds, Context, DisplayId, FocusHandle, Global, Image, ImageFormat, IntoElement, KeyDownEvent, ObjectFit, Render,
     TitlebarOptions, Window, WindowBounds, WindowOptions, img, prelude::*, px, size,
 };
-use gpui::component::{ActiveTheme as _, h_flex, label::Label, link::Link, v_flex};
 
 use crate::notify;
 
@@ -118,7 +118,13 @@ impl Render for AboutPage {
             .text_color(theme.foreground)
             .on_key_down(cx.listener(|this, event, window, cx| this.handle_key(event, window, cx)))
             .on_action(cx.listener(|this, _: &crate::CloseTab, window, cx| this.close_window(window, cx)))
-            .child(img(app_icon()).w(px(96.0)).h(px(96.0)).object_fit(ObjectFit::Contain).rounded_lg())
+            .child(
+                img(app_icon())
+                    .w(px(96.0))
+                    .h(px(96.0))
+                    .object_fit(ObjectFit::Contain)
+                    .rounded_lg(),
+            )
             .child(Label::new(APP_NAME).text_xl())
             .child(Label::new(TAGLINE).text_sm().text_color(theme.muted_foreground))
             .child(Label::new(format!("Version {VERSION}")).text_sm())

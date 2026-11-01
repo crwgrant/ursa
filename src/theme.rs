@@ -4,8 +4,8 @@ use std::{
     time::SystemTime,
 };
 
-use gpui::{App, Global, Hsla, Pixels, SharedString, px, rgb};
 use gpui::component::{Colorize as _, Theme, ThemeColor, ThemeMode};
+use gpui::{App, Global, Hsla, Pixels, SharedString, px, rgb};
 use serde::Deserialize;
 
 #[cfg(target_os = "macos")]
@@ -103,7 +103,7 @@ pub fn choices(cx: &App) -> Vec<(String, String)> {
         .themes
         .iter()
         .map(|theme| (theme.id.clone(), theme.label.clone()))
-            .collect()
+        .collect()
 }
 
 pub fn catalog(cx: &App) -> ThemeCatalog {

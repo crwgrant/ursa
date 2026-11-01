@@ -1,13 +1,13 @@
-use gpui::{
-    App, Bounds, Context, DisplayId, FocusHandle, Global, IntoElement, KeyDownEvent, Render, SharedString, TitlebarOptions,
-    Window, WindowBounds, WindowOptions, prelude::*, px, size,
-};
 use gpui::component::{
     ActiveTheme as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     setting::{NumberFieldOptions, SettingField, SettingGroup, SettingItem, SettingPage, Settings},
     v_flex,
+};
+use gpui::{
+    App, Bounds, Context, DisplayId, FocusHandle, Global, IntoElement, KeyDownEvent, Render, SharedString, TitlebarOptions,
+    Window, WindowBounds, WindowOptions, prelude::*, px, size,
 };
 
 use crate::{config, notify, theme};
@@ -50,7 +50,9 @@ pub fn open(cx: &mut App) {
     }
 
     let display_id = crate::host_display_id(cx);
-    match gpui::open_window(window_options(cx, display_id), cx, |window, cx| cx.new(|cx| SettingsPage::new(window, cx))) {
+    match gpui::open_window(window_options(cx, display_id), cx, |window, cx| {
+        cx.new(|cx| SettingsPage::new(window, cx))
+    }) {
         Ok((handle, _)) => {
             crate::on_aux_window_close(handle, cx, |cx| {
                 if cx.has_global::<SettingsUi>() {
@@ -263,30 +265,33 @@ fn terminal_page(cx: &App) -> SettingPage {
                     .disabled(!cfg!(windows) || sidebar_on),
                 ),
         )
-        .group(SettingGroup::new().title("Scrollback").item(
-            SettingItem::new(
-                "Lines",
-                SettingField::number_input(
-                    NumberFieldOptions {
-                        min: f64::from(config::SCROLLBACK_MIN),
-                        max: f64::from(config::SCROLLBACK_MAX),
-                        step: 100.0,
-                    },
-                    |cx| f64::from(config::scrollback_lines(cx)),
-                    |lines, cx| {
-                        config::update(cx, |config| {
-                            config.scrollback_lines = (lines.round() as u32).clamp(config::SCROLLBACK_MIN, config::SCROLLBACK_MAX);
-                        });
-                    },
+        .group(
+            SettingGroup::new().title("Scrollback").item(
+                SettingItem::new(
+                    "Lines",
+                    SettingField::number_input(
+                        NumberFieldOptions {
+                            min: f64::from(config::SCROLLBACK_MIN),
+                            max: f64::from(config::SCROLLBACK_MAX),
+                            step: 100.0,
+                        },
+                        |cx| f64::from(config::scrollback_lines(cx)),
+                        |lines, cx| {
+                            config::update(cx, |config| {
+                                config.scrollback_lines =
+                                    (lines.round() as u32).clamp(config::SCROLLBACK_MIN, config::SCROLLBACK_MAX);
+                            });
+                        },
+                    )
+                    .default_value(f64::from(config::DEFAULT_SCROLLBACK)),
                 )
-                .default_value(f64::from(config::DEFAULT_SCROLLBACK)),
-            )
-            .description(format!(
-                "Lines kept above the viewport ({}–{}).",
-                config::SCROLLBACK_MIN,
-                config::SCROLLBACK_MAX
-            )),
-        ))
+                .description(format!(
+                    "Lines kept above the viewport ({}–{}).",
+                    config::SCROLLBACK_MIN,
+                    config::SCROLLBACK_MAX
+                )),
+            ),
+        )
 }
 
 fn config_page(cx: &App) -> SettingPage {
@@ -307,11 +312,16 @@ fn config_page(cx: &App) -> SettingPage {
                 .item(SettingItem::render(|_, _, _| {
                     h_flex()
                         .gap_2()
-                        .child(Button::new("open-config").secondary().label("Open File").on_click(|_, _, cx| {
-                            if let Some(path) = config::ensure_file(cx) {
-                                cx.open_with_system(&path);
-                            }
-                        }))
+                        .child(
+                            Button::new("open-config")
+                                .secondary()
+                                .label("Open File")
+                                .on_click(|_, _, cx| {
+                                    if let Some(path) = config::ensure_file(cx) {
+                                        cx.open_with_system(&path);
+                                    }
+                                }),
+                        )
                         .child(
                             Button::new("reveal-config")
                                 .secondary()
@@ -322,12 +332,12 @@ fn config_page(cx: &App) -> SettingPage {
                                     }
                                 }),
                         )
-                        .child(Button::new("reload-config").secondary().label("Reload").on_click(|_, _, cx| {
-                            match config::reload(cx) {
+                        .child(Button::new("reload-config").secondary().label("Reload").on_click(
+                            |_, _, cx| match config::reload(cx) {
                                 Ok(()) => notify::show(cx, "Reloaded settings"),
                                 Err(error) => notify::show(cx, format!("Config file error: {error}")),
-                            }
-                        }))
+                            },
+                        ))
                 }))
                 .item(SettingItem::render(|_, _, _| {
                     Button::new("reset-config")

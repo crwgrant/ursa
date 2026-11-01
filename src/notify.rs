@@ -1,5 +1,5 @@
+use gpui::component::{WindowExt as _, notification::Notification};
 use gpui::{AnyWindowHandle, App, AppContext as _, SharedString};
-use gpui::component::{notification::Notification, WindowExt as _};
 
 pub fn show(cx: &mut App, message: impl Into<SharedString>) {
     let message = message.into();
