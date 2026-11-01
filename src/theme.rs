@@ -4,7 +4,8 @@ use std::{
     time::SystemTime,
 };
 
-use gpui::{App, Global, Pixels, px};
+use gpui::{App, Global, Hsla, Pixels, SharedString, px, rgb};
+use gpui::component::{Colorize as _, Theme, ThemeColor, ThemeMode};
 use serde::Deserialize;
 
 #[cfg(target_os = "macos")]
@@ -155,6 +156,7 @@ pub fn reload(cx: &mut App) {
     let config_path = crate::config::path(cx);
     let path = resolved_path(&config_path, &crate::config::current(cx).themes_file);
     cx.set_global(load_catalog(&path, &config_path));
+    sync_kit(cx);
 }
 
 pub fn reload_if_stale(cx: &mut App) -> bool {
@@ -169,7 +171,165 @@ pub fn reload_if_stale(cx: &mut App) -> bool {
         return false;
     }
     cx.set_global(load_catalog(&path, &config_path));
+    sync_kit(cx);
     true
+}
+
+pub fn sync_kit(cx: &mut App) {
+    if !cx.has_global::<Theme>() {
+        return;
+    }
+
+    let colors = colors(cx);
+    let dark = is_dark_theme(&colors);
+    let kit_colors = kit_colors(colors);
+    let ui_font = SharedString::from(UI_FONT_FAMILY);
+    let mono_font = crate::config::font_family(cx);
+    let mono_size = px(crate::config::current(cx).font_size);
+
+    Theme::update(cx, |theme| {
+        theme.mode = if dark { ThemeMode::Dark } else { ThemeMode::Light };
+    });
+    Theme::update(cx, |theme| {
+        theme.colors = kit_colors;
+        theme.font_family = ui_font;
+        theme.mono_font_family = mono_font;
+        theme.font_size = px(FONT_SIZE);
+        theme.mono_font_size = mono_size;
+    });
+}
+
+fn is_dark_theme(colors: &Colors) -> bool {
+    luminance(colors.window) < 0.5
+}
+
+fn hsla_from_rgb(color: u32) -> Hsla {
+    rgb(color).into()
+}
+
+fn kit_colors(colors: Colors) -> ThemeColor {
+    let dark = is_dark_theme(&colors);
+    let mut kit = if dark { *ThemeColor::dark() } else { *ThemeColor::light() };
+
+    let window = hsla_from_rgb(colors.window);
+    let sidebar = hsla_from_rgb(colors.sidebar);
+    let border = hsla_from_rgb(colors.sidebar_border);
+    let hover = hsla_from_rgb(colors.tab_hover);
+    let active = hsla_from_rgb(colors.tab_active);
+    let accent = hsla_from_rgb(colors.accent);
+    let text = hsla_from_rgb(colors.text);
+    let dim = hsla_from_rgb(colors.text_dim);
+    let button = hsla_from_rgb(colors.button);
+    let tooltip = hsla_from_rgb(colors.tooltip);
+    let cursor = hsla_from_rgb(colors.cursor);
+    let on_accent = if luminance(colors.accent) > 0.55 {
+        hsla_from_rgb(colors.window)
+    } else {
+        hsla_from_rgb(0xffffff)
+    };
+    let accent_hover = if dark { accent.lighten(0.12) } else { accent.darken(0.08) };
+    let accent_active = if dark { accent.lighten(0.2) } else { accent.darken(0.16) };
+
+    kit.background = window;
+    kit.foreground = text;
+    kit.muted = hover;
+    kit.muted_foreground = dim;
+    kit.border = border;
+    kit.accent = hover;
+    kit.accent_foreground = text;
+    kit.primary = accent;
+    kit.primary_foreground = on_accent;
+    kit.primary_hover = accent_hover;
+    kit.primary_active = accent_active;
+    kit.button = button;
+    kit.button_foreground = text;
+    kit.button_hover = hover;
+    kit.button_active = active;
+    kit.button_primary = accent;
+    kit.button_primary_foreground = on_accent;
+    kit.button_primary_hover = accent_hover;
+    kit.button_primary_active = accent_active;
+    kit.button_secondary = button;
+    kit.button_secondary_foreground = text;
+    kit.button_secondary_hover = hover;
+    kit.button_secondary_active = active;
+    kit.secondary = button;
+    kit.secondary_foreground = text;
+    kit.secondary_hover = hover;
+    kit.secondary_active = active;
+    kit.sidebar = sidebar;
+    kit.sidebar_foreground = text;
+    kit.sidebar_border = border;
+    kit.sidebar_accent = active;
+    kit.sidebar_accent_foreground = text;
+    kit.sidebar_primary = accent;
+    kit.sidebar_primary_foreground = on_accent;
+    kit.popover = tooltip;
+    kit.popover_foreground = text;
+    kit.group_box = sidebar;
+    kit.group_box_foreground = text;
+    kit.caret = cursor;
+    kit.input = border;
+    kit.link = accent;
+    kit.link_hover = accent_hover;
+    kit.link_active = accent_active;
+    kit.ring = accent;
+    kit.selection = accent.opacity(0.35);
+    kit.list = window;
+    kit.list_hover = hover;
+    kit.list_active = active;
+    kit.list_active_border = accent;
+    kit.list_even = sidebar;
+    kit.list_head = sidebar;
+    kit.tab = window;
+    kit.tab_foreground = dim;
+    kit.tab_active = active;
+    kit.tab_active_foreground = text;
+    kit.tab_bar = sidebar;
+    kit.tab_bar_segmented = sidebar;
+    kit.title_bar = sidebar;
+    kit.title_bar_border = border;
+    kit.status_bar = sidebar;
+    kit.status_bar_border = border;
+    kit.scrollbar = window;
+    kit.scrollbar_thumb = dim.opacity(0.45);
+    kit.scrollbar_thumb_hover = dim.opacity(0.7);
+    kit.window_border = border;
+    kit.overlay = window.opacity(0.72);
+    kit.drop_target = accent.opacity(0.2);
+    kit.drag_border = accent;
+    kit.progress_bar = accent;
+    kit.slider_bar = accent;
+    kit.slider_thumb = on_accent;
+    kit.switch = hover;
+    kit.switch_thumb = text;
+    kit.skeleton = hover;
+    kit.accordion = sidebar;
+    kit.description_list_label = sidebar;
+    kit.description_list_label_foreground = dim;
+    kit.table = window;
+    kit.table_even = sidebar;
+    kit.table_hover = hover;
+    kit.table_active = active;
+    kit.table_active_border = accent;
+    kit.table_head = sidebar;
+    kit.table_head_foreground = dim;
+    kit.table_foot = sidebar;
+    kit.table_foot_foreground = dim;
+    kit.table_row_border = border;
+    kit.red = hsla_from_rgb(colors.ansi[1]);
+    kit.red_light = hsla_from_rgb(colors.ansi[9]);
+    kit.green = hsla_from_rgb(colors.ansi[2]);
+    kit.green_light = hsla_from_rgb(colors.ansi[10]);
+    kit.yellow = hsla_from_rgb(colors.ansi[3]);
+    kit.yellow_light = hsla_from_rgb(colors.ansi[11]);
+    kit.blue = hsla_from_rgb(colors.ansi[4]);
+    kit.blue_light = hsla_from_rgb(colors.ansi[12]);
+    kit.magenta = hsla_from_rgb(colors.ansi[5]);
+    kit.magenta_light = hsla_from_rgb(colors.ansi[13]);
+    kit.cyan = hsla_from_rgb(colors.ansi[6]);
+    kit.cyan_light = hsla_from_rgb(colors.ansi[14]);
+    kit
 }
 
 pub fn parse(text: &str) -> Result<Vec<ThemeEntry>, String> {
@@ -743,6 +903,21 @@ mod tests {
         assert_eq!(night.colors.term_bg, 0x1a1b26);
         assert_eq!(nord.colors.term_bg, 0x2e3440);
         assert_eq!(nord.colors.text_dim, 0xd8dee9);
+    }
+
+    #[test]
+    fn kit_colors_follow_ursa_palette() {
+        let nord = embedded_themes().into_iter().find(|theme| theme.id == "nord").unwrap().colors;
+        assert!(is_dark_theme(&nord));
+        let kit = kit_colors(nord);
+        assert_eq!(kit.background, hsla_from_rgb(nord.window));
+        assert_eq!(kit.foreground, hsla_from_rgb(nord.text));
+        assert_eq!(kit.sidebar, hsla_from_rgb(nord.sidebar));
+        assert_eq!(kit.primary, hsla_from_rgb(nord.accent));
+        assert_eq!(kit.link, hsla_from_rgb(nord.accent));
+        let mut light = nord;
+        light.window = 0xf8f8f8;
+        assert!(!is_dark_theme(&light));
     }
 
     #[test]
