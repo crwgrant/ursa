@@ -19,6 +19,6 @@ jobs:
     - name: Format
       run: cargo fmt
     - name: Check
-      run: cargo check --offline
+      run: cargo check
     - name: Test
       run: cargo test --offline
