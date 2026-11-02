@@ -16,7 +16,7 @@ mod theme;
 use std::collections::HashMap;
 
 use gpui::component::{
-    Sizable as _,
+    Sizable as _, TitleBar,
     button::{Button, ButtonVariants as _},
     menu::{AppMenuBar, DropdownMenu, PopupMenuItem},
 };
@@ -1192,7 +1192,7 @@ impl Render for Workspace {
             .size_full()
             .bg(rgb(colors.window))
             .text_color(rgb(colors.text))
-            .font_family(theme::UI_FONT_FAMILY)
+            .font_family(theme::resolved_ui_font(cx))
             .on_action(cx.listener(|this, _: &NewSession, window, cx| this.add_session(window, cx)))
             .on_action(cx.listener(|this, _: &NewTab, window, cx| this.add_tab(window, cx)))
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| this.close_active_tab(window, cx)))
@@ -1229,7 +1229,9 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &FocusPrevPane, window, cx| this.focus_offset(-1, window, cx)))
             .on_action(|_: &OpenSettings, _window, cx| crate::settings::open(cx))
             .on_action(|_: &OpenAbout, _window, cx| crate::about::open(cx))
-            .when(cfg!(not(target_os = "macos")), |workspace| workspace.child(self.menu_bar.clone()))
+            .when(cfg!(not(target_os = "macos")), |workspace| {
+                workspace.child(TitleBar::new().child(self.menu_bar.clone()))
+            })
             .child(
                 div()
                     .flex()
