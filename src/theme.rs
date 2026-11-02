@@ -17,8 +17,33 @@ pub const FONT_FAMILY: &str = "monospace";
 
 #[cfg(target_os = "macos")]
 pub const UI_FONT_FAMILY: &str = "Menlo";
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
 pub const UI_FONT_FAMILY: &str = ".SystemUIFont";
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub const UI_FONT_FAMILY: &str = "sans-serif";
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+const LINUX_UI_FONTS: &[&str] = &["Noto Sans", "Cantarell", "DejaVu Sans", "Ubuntu", "Inter", "Adwaita Sans"];
+
+/// UI chrome face. On Linux, `.SystemUIFont` maps to a family most desktops
+/// do not ship, so pick an installed sans from `LINUX_UI_FONTS` first.
+/// Prefer static faces: variable fonts such as Adwaita Sans can paint twice.
+pub fn resolved_ui_font(cx: &App) -> SharedString {
+    SharedString::from(pick_ui_font(&cx.text_system().all_font_names()))
+}
+
+fn pick_ui_font(installed: &[String]) -> String {
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        for candidate in LINUX_UI_FONTS {
+            if let Some(name) = installed.iter().find(|family| family.eq_ignore_ascii_case(candidate)) {
+                return name.clone();
+            }
+        }
+    }
+    let _ = installed;
+    UI_FONT_FAMILY.to_string()
+}
 
 pub const FONT_SIZE: f32 = 13.0;
 pub const LINE_HEIGHT: f32 = 1.35;
@@ -183,7 +208,7 @@ pub fn sync_kit(cx: &mut App) {
     let colors = colors(cx);
     let dark = is_dark_theme(&colors);
     let kit_colors = kit_colors(colors);
-    let ui_font = SharedString::from(UI_FONT_FAMILY);
+    let ui_font = resolved_ui_font(cx);
     let mono_font = crate::config::font_family(cx);
     let mono_size = px(crate::config::current(cx).font_size);
 
@@ -886,6 +911,17 @@ fn parse_hex(text: &str) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn linux_ui_font_prefers_an_installed_sans() {
+        let installed = vec!["Noto Sans".into(), "monospace".into()];
+        let picked = pick_ui_font(&installed);
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        assert_eq!(picked, "Noto Sans");
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        assert_eq!(picked, UI_FONT_FAMILY);
+        assert_eq!(pick_ui_font(&[]), UI_FONT_FAMILY);
+    }
 
     #[test]
     fn default_file_loads_builtin_themes() {
